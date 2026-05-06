@@ -1,0 +1,36 @@
+# ============================================================
+# Service systemd — backend GMAO ARGOS
+# Installation :
+#   sudo cp deploy/gmao-backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gmao-backend
+# ============================================================
+[Unit]
+Description=GMAO ARGOS backend (Node.js / Fastify)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=gmao
+Group=gmao
+WorkingDirectory=/home/gmao/gmao/backend
+Environment=NODE_ENV=production
+EnvironmentFile=/home/gmao/gmao/backend/.env
+ExecStart=/usr/bin/node /home/gmao/gmao/backend/dist/server.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gmao-backend
+
+# Sécurité (durcissement)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/gmao/gmao/backend/uploads /home/gmao/gmao/backend/dist
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,57 @@
+# ============================================================
+# Docker Compose — GMAO ARGOS backend + Postgres
+# Démarrage : docker compose up --build
+# ============================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gmao_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gmao
+      POSTGRES_PASSWORD: gmao_password
+      POSTGRES_DB: gmao_argos
+      TZ: Indian/Reunion
+    ports:
+      - "5432:5432"
+    volumes:
+      - gmao_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gmao -d gmao_argos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: .
+    container_name: gmao_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4000
+      DATABASE_URL: postgresql://gmao:gmao_password@postgres:5432/gmao_argos?schema=public
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-use-openssl-rand-hex-64}
+      JWT_EXPIRES_IN: 2h
+      JWT_REFRESH_EXPIRES_IN: 7d
+      CORS_ORIGIN: "*"
+      UPLOAD_DIR: /app/uploads
+      SERVE_FRONTEND: "true"
+      FRONTEND_DIR: /app/public
+      SEED_SUPER_LOGIN: ${SEED_SUPER_LOGIN:-admin}
+      SEED_SUPER_PASSWORD: ${SEED_SUPER_PASSWORD:-admin}
+      SEED_SUPER_NAME: "Super Administrateur"
+    ports:
+      - "4000:4000"
+    volumes:
+      - gmao_uploads:/app/uploads
+      # Frontend statique (proto) monté en lecture seule
+      - ../:/app/public:ro
+
+volumes:
+  gmao_pg_data:
+  gmao_uploads:
