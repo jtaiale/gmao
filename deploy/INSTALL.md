@@ -74,13 +74,13 @@ Variables à adapter (les autres restent par défaut) :
 NODE_ENV=production
 HOST=127.0.0.1
 PORT=4000
-DATABASE_URL=postgresql://gmao:VOTRE_MOT_DE_PASSE@localhost:5432/gmao_argos?schema=public
-JWT_SECRET=GENERER_AVEC_OPENSSL_RAND_HEX_64
-CORS_ORIGIN=https://gmao.argos-oi.fr
+DATABASE_URL=postgresql://gmao:Argos974@localhost:5432/gmaoargos?schema=public
+JWT_SECRET=272ec3eb79ca870eaab2fcacf99e43f8a4bbd95305da4d188abe09a58490379a4ef083b4f340488ea611a96ee858f41978c873915e6d900ab46b07ecb442e845
+CORS_ORIGIN=https://gmao.argos-oi.re
 SERVE_FRONTEND=true
 FRONTEND_DIR=../
 SEED_SUPER_LOGIN=admin
-SEED_SUPER_PASSWORD=ChangezMoiUrgemment!
+SEED_SUPER_PASSWORD=nir@J974
 ```
 
 Génération d'un secret JWT solide :

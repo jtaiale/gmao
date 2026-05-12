@@ -95,12 +95,14 @@ export async function ticketsRoutes(app: FastifyInstance) {
       where, orderBy: { createdAt: 'desc' },
       include: {
         technicians: { include: { technician: { select: { id: true, name: true, color: true } } } },
-        client: { select: { id: true, name: true } },
-        site:   { select: { id: true, name: true } },
+        client:  { select: { id: true, name: true } },
+        site:    { select: { id: true, name: true } },
+        product: { select: { id: true, name: true } },
+        comments: { orderBy: { createdAt: 'asc' } },
       },
       take: 500,
     });
-    return tickets.map(serializeList);
+    return tickets.map(serializeFull);
   });
 
   // GET /tickets/:id — détail

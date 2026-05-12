@@ -91,8 +91,9 @@ async function bootstrap() {
   // Gestion d'erreur globale
   app.setErrorHandler((err, req, reply) => {
     req.log.error(err);
-    if (err.statusCode && err.statusCode < 500) {
-      return reply.code(err.statusCode).send({ error: err.code ?? 'error', message: err.message });
+    const e = err as { statusCode?: number; code?: string; message?: string };
+    if (e.statusCode && e.statusCode < 500) {
+      return reply.code(e.statusCode).send({ error: e.code ?? 'error', message: e.message });
     }
     return reply.code(500).send({ error: 'internal_error', message: 'Erreur interne du serveur' });
   });
