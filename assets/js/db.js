@@ -37,9 +37,10 @@ const PERMISSION_MENUS = [
   { key: 'admins',      label: 'Administrateurs' },
   { key: 'accidents',   label: 'Presque accidents' },
   { key: 'derogations', label: 'Dérogations' },
-  { key: 'bulletins',   label: 'Bulletin NOUT ZINFOS' },
-  { key: 'stats',       label: 'Statistiques' },
-  { key: 'exports',     label: 'Extractions' },
+  { key: 'bulletins',     label: 'Bulletin NOUT ZINFOS' },
+  { key: 'notifications', label: 'Notifications mail' },
+  { key: 'stats',         label: 'Statistiques' },
+  { key: 'exports',       label: 'Extractions' },
 ];
 const PERMISSION_LEVELS = [
   { key: 'none',  label: 'Aucun' },
@@ -86,6 +87,7 @@ const DB = {
   data: {
     clients: [], sites: [], products: [], technicians: [], admins: [],
     tickets: [], chantiers: [], accidents: [], derogations: [], bulletins: [],
+    leaves: [],
   },
 
   /** Charge les données à partir du backend (à appeler après login). */
@@ -128,6 +130,7 @@ const DB = {
       fetchSafe('accidents',   () => api.accidents.list()),
       fetchSafe('derogations', () => api.derogations.list()),
       fetchSafe('bulletins',   () => api.bulletins.list()),
+      fetchSafe('leaves',      () => api.leaves.list()),
       // technicians : utile pour tous (planning, affichage) mais nécessite
       // d'être admin côté backend. On laisse vide pour les autres rôles.
       (kind === 'admin') ? fetchSafe('technicians', () => api.technicians.list()) : Promise.resolve(),
@@ -345,6 +348,137 @@ const DB = {
       throw e;
     }
   },
+  // ============================================================
+  // Congés / absences techniciens
+  // ============================================================
+  async createLeave(payload) {
+    const optimistic = {
+      id: uid('lv'),
+      technicianId: payload.technicianId,
+      startDate: payload.startDate,
+      endDate:   payload.endDate,
+      type:      payload.type || 'conge',
+      comment:   payload.comment || '',
+      createdAt: new Date().toISOString(),
+    };
+    this.data.leaves = [...(this.data.leaves || []), optimistic];
+    _rerender();
+    try {
+      const server = await api.leaves.create(payload);
+      const i = this.data.leaves.findIndex(x => x.id === optimistic.id);
+      if (i >= 0) this.data.leaves[i] = server;
+      _rerender();
+      return server;
+    } catch (e) {
+      this.data.leaves = this.data.leaves.filter(x => x.id !== optimistic.id);
+      _silentToast('Échec création congé : ' + (e?.message || ''), 'error');
+      _rerender();
+      throw e;
+    }
+  },
+  async deleteLeave(id) {
+    const prev = (this.data.leaves || []).find(x => x.id === id);
+    if (!prev) return;
+    this.data.leaves = this.data.leaves.filter(x => x.id !== id);
+    _rerender();
+    try { await api.leaves.delete(id); }
+    catch (e) {
+      this.data.leaves.push(prev);
+      _silentToast('Échec suppression congé : ' + (e?.message || ''), 'error');
+      _rerender();
+    }
+  },
+  /** Renvoie le congé en cours pour ce tech sur cette date (ou null). */
+  leaveOn(techId, date) {
+    if (!date) return null;
+    const d = new Date(date); d.setHours(12,0,0,0);
+    return (this.data.leaves || []).find(l => {
+      if (l.technicianId !== techId) return false;
+      const s = new Date(l.startDate); s.setHours(0,0,0,0);
+      const e = new Date(l.endDate);   e.setHours(23,59,59,999);
+      return d >= s && d <= e;
+    }) || null;
+  },
+  isOnLeave(techId, date) { return !!this.leaveOn(techId, date); },
+
+  // ============================================================
+  // Chantier — planifications multiples
+  // ============================================================
+  async addChantierSchedule(chantierId, payload) {
+    const c = this.get('chantiers', chantierId);
+    if (!c) return null;
+    const optimistic = { id: uid('sch'), chantierId, scheduledAt: payload.scheduledAt, durationHours: payload.durationHours ?? 8, comment: payload.comment || '' };
+    c.schedules = [...(c.schedules || []), optimistic];
+    _rerender();
+    try {
+      const server = await api.chantiers.addSchedule(chantierId, payload);
+      const i = c.schedules.findIndex(x => x.id === optimistic.id);
+      if (i >= 0) c.schedules[i] = server;
+      _rerender();
+      return server;
+    } catch (e) {
+      c.schedules = c.schedules.filter(x => x.id !== optimistic.id);
+      _silentToast('Échec ajout planification : ' + (e?.message || ''), 'error');
+      _rerender();
+      throw e;
+    }
+  },
+  async removeChantierSchedule(chantierId, scheduleId) {
+    const c = this.get('chantiers', chantierId);
+    if (!c) return;
+    const prev = (c.schedules || []).find(x => x.id === scheduleId);
+    c.schedules = (c.schedules || []).filter(x => x.id !== scheduleId);
+    _rerender();
+    try { await api.chantiers.removeSchedule(chantierId, scheduleId); }
+    catch (e) {
+      if (prev) c.schedules.push(prev);
+      _silentToast('Échec suppression planification : ' + (e?.message || ''), 'error');
+      _rerender();
+    }
+  },
+  /** Renvoie true si l'une des planifications du chantier (ou la legacy scheduledAt) couvre le jour donné, pour le tech. */
+  chantierCoversDay(c, techId, day) {
+    if (!c) return false;
+    if (techId && !(c.technicianIds || []).includes(techId)) return false;
+    const d = new Date(day); d.setHours(12,0,0,0);
+    const inRange = (sched, durHours) => {
+      if (!sched) return false;
+      const start = new Date(sched); start.setHours(0,0,0,0);
+      const days = Math.max(1, Math.ceil((durHours || 8) / 8));
+      const end = new Date(start); end.setDate(start.getDate() + days - 1); end.setHours(23,59,59,999);
+      return d >= start && d <= end;
+    };
+    // Plannings multiples
+    const schedules = Array.isArray(c.schedules) ? c.schedules : [];
+    if (schedules.some(s => inRange(s.scheduledAt, s.durationHours))) return true;
+    // Legacy : scheduledAt + duration en jours
+    if (c.scheduledAt) {
+      const days = Math.max(1, c.duration || 1);
+      return inRange(c.scheduledAt, days * 8);
+    }
+    return false;
+  },
+
+  /** Saisie des heures réalisées sur un chantier (admin ou tech affecté). */
+  async setChantierHours(chantierId, hoursDone) {
+    const c = this.get('chantiers', chantierId);
+    if (!c) return null;
+    const prev = c.hoursDone;
+    c.hoursDone = Number(hoursDone) || 0;
+    _rerender();
+    try {
+      const server = await api.chantiers.setHours(chantierId, c.hoursDone);
+      Object.assign(c, server);
+      _rerender();
+      return c;
+    } catch (e) {
+      c.hoursDone = prev;
+      _silentToast('Échec mise à jour des heures : ' + (e?.message || ''), 'error');
+      _rerender();
+      throw e;
+    }
+  },
+
   async addChantierComment(chantierId, comment) {
     const c = this.get('chantiers', chantierId);
     if (!c) return null;

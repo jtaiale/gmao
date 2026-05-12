@@ -20,10 +20,19 @@ export async function authRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', message: 'Identifiant et mot de passe requis' });
     const { login, password, kind } = parsed.data;
 
-    const user = await app.prisma.user.findUnique({ where: { login } });
+    const user = await app.prisma.user.findUnique({
+      where: { login },
+      include: { client: true },
+    });
     if (!user) return reply.code(401).send({ error: 'invalid_credentials', message: 'Identifiant ou mot de passe incorrect' });
     if (kind && user.kind !== kind) {
       return reply.code(401).send({ error: 'wrong_kind', message: 'Ce compte n\'est pas autorisé pour cet espace' });
+    }
+    if (user.active === false) {
+      return reply.code(403).send({ error: 'account_disabled', message: 'Compte désactivé. Contactez votre administrateur.' });
+    }
+    if (user.kind === 'client' && user.client && user.client.portalEnabled === false) {
+      return reply.code(403).send({ error: 'portal_disabled', message: 'Accès portail client désactivé.' });
     }
     const ok = await verifyPassword(password, user.password);
     if (!ok) return reply.code(401).send({ error: 'invalid_credentials', message: 'Identifiant ou mot de passe incorrect' });

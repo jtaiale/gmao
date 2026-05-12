@@ -15,6 +15,7 @@ const ADMIN_ROUTES = [
   { path: '/admin/accidents',       title: 'Presque-accidents', icon: 'alert',     perm: 'accidents',  view: () => Safety.accidentsList('admin') },
   { path: '/admin/derogations',     title: 'Dérogations',       icon: 'alert',     perm: 'derogations',view: () => Safety.derogationsList('admin') },
   { path: '/admin/bulletins',       title: 'Bulletin NOUT ZINFOS', icon: 'alert',  perm: 'bulletins',  view: () => Bulletins.list('admin') },
+  { path: '/admin/notifications',   title: 'Notifications mail',icon: 'inbox',     perm: 'notifications', view: () => AdminViews.notifications() },
   { path: '/admin/stats',           title: 'Statistiques',      icon: 'chart',     perm: 'stats',      view: () => AdminViews.stats() },
   { path: '/admin/exports',         title: 'Extractions',       icon: 'download',  perm: 'exports',    view: () => AdminViews.exports() },
 ];
@@ -68,11 +69,15 @@ const Router = {
       return;
     }
     if (Auth.isAdmin() && parts[1] === 'planning' && parts[2] !== undefined) {
-      this._renderShell(routes, '/admin/planning', 'Planning', AdminViews.planning(parseInt(parts[2])));
+      const view = (parts[2] === 'month' || parts[2] === 'week') ? parts[2] : 'week';
+      const off  = (parts[2] === 'month' || parts[2] === 'week') ? parseInt(parts[3] || '0') : parseInt(parts[2]);
+      this._renderShell(routes, '/admin/planning', 'Planning', AdminViews.planning(off, view));
       return;
     }
     if (Auth.isTech() && parts[1] === 'planning' && parts[2] !== undefined) {
-      this._renderShell(routes, '/tech/planning', 'Planning', TechViews.planningGraphical(parseInt(parts[2])));
+      const view = (parts[2] === 'month' || parts[2] === 'week') ? parts[2] : 'week';
+      const off  = (parts[2] === 'month' || parts[2] === 'week') ? parseInt(parts[3] || '0') : parseInt(parts[2]);
+      this._renderShell(routes, '/tech/planning', 'Planning', TechViews.planningGraphical(off, view));
       return;
     }
     // Chantiers detail
@@ -161,6 +166,7 @@ const Router = {
       { title: '', items: visible.filter(r => ['/admin','/admin/tickets','/admin/planning','/admin/chantiers'].includes(r.path)) },
       { title: 'Sécurité', items: visible.filter(r => ['/admin/accidents','/admin/derogations','/admin/bulletins'].includes(r.path)) },
       { title: 'Référentiels', items: visible.filter(r => ['/admin/clients','/admin/sites','/admin/products','/admin/technicians','/admin/admins'].includes(r.path)) },
+      { title: 'Système', items: visible.filter(r => ['/admin/notifications'].includes(r.path)) },
       { title: 'Analyses', items: visible.filter(r => ['/admin/stats','/admin/exports'].includes(r.path)) },
     ].filter(g => g.items.length > 0) : [{ title: '', items: visible }];
 

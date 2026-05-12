@@ -6,7 +6,7 @@
 export const PERMISSION_MENUS = [
   'tickets', 'planning', 'clients', 'sites', 'products', 'chantiers',
   'technicians', 'admins', 'accidents', 'derogations', 'bulletins',
-  'stats', 'exports',
+  'stats', 'exports', 'notifications',
 ] as const;
 
 export type PermissionMenu = typeof PERMISSION_MENUS[number];

@@ -45,16 +45,26 @@ const Chantier = {
       .map(id => `<span class="tech-pill"><span class="tech-color" style="background:${DB.techColor(id)}"></span>${escapeHtml(DB.techName(id))}</span>`)
       .join(' ');
     return `<table class="data-table">
-      <thead><tr><th>N°</th><th>Dénomination</th><th>Client / Site</th><th>Techniciens</th><th>Période</th><th>Durée</th></tr></thead>
-      <tbody>${items.map(c => `
+      <thead><tr><th>N°</th><th>Dénomination</th><th>Client / Site</th><th>Techniciens</th><th>Période</th><th>Durée</th><th>Heures (réalisées / budget)</th></tr></thead>
+      <tbody>${items.map(c => {
+        const nbT = (c.technicianIds || []).length;
+        const dur = Number(c.duration) || 0;
+        const budget = Number(c.hours)     || 0;
+        const done   = Number(c.hoursDone) || 0;
+        const over   = budget > 0 && done > budget;
+        return `
         <tr onclick="location.hash='${base}${c.id}'" style="cursor:pointer">
           <td data-label="N°"><span class="ticket-link">${c.number}</span></td>
           <td data-label="Dénomination">${escapeHtml(c.name)}<br><small class="muted">${escapeHtml(c.numAffaire || '')}</small></td>
           <td data-label="Client">${escapeHtml(DB.clientName(c.clientId))}<br><small class="muted">${escapeHtml(DB.siteName(c.siteId))}</small></td>
-          <td data-label="Techniciens">${(c.technicianIds||[]).length === 0 ? '<span class="muted">—</span>' : techPills(c.technicianIds)}</td>
+          <td data-label="Techniciens">${nbT === 0 ? '<span class="muted">—</span>' : techPills(c.technicianIds)}</td>
           <td data-label="Période">${c.scheduledAt ? fmtDate(c.scheduledAt) : '<span class="muted">non planifié</span>'}</td>
-          <td data-label="Durée">${c.duration ? c.duration + ' j' : '<span class="muted">—</span>'}</td>
-        </tr>`).join('')}</tbody>
+          <td data-label="Durée">${dur ? dur + ' j' : '<span class="muted">—</span>'}</td>
+          <td data-label="Heures">${budget > 0
+            ? `<strong style="color:${over?'var(--danger)':'inherit'}">${done.toFixed(1)} h</strong> / ${budget.toFixed(1)} h`
+            : `<strong>${done.toFixed(1)} h</strong> <span class="muted">/ —</span>`}</td>
+        </tr>`;
+      }).join('')}</tbody>
     </table>`;
   },
 
@@ -87,6 +97,7 @@ const Chantier = {
                 <div class="meta-item"><div class="meta-label">Site</div><div class="meta-value">${escapeHtml(DB.siteName(c.siteId))}</div></div>
                 <div class="meta-item"><div class="meta-label">Date de début</div><div class="meta-value">${c.scheduledAt ? fmtDate(c.scheduledAt) : '<span class="muted">non planifié</span>'}</div></div>
                 <div class="meta-item"><div class="meta-label">Durée</div><div class="meta-value">${c.duration || 0} jour${(c.duration||0) > 1 ? 's' : ''}</div></div>
+                <div class="meta-item"><div class="meta-label">Budget heures</div><div class="meta-value">${(c.hours || 0).toFixed(1)} h</div></div>
                 <div class="meta-item"><div class="meta-label">Créé le</div><div class="meta-value">${fmtDateTime(c.createdAt)}</div></div>
               </div>
               ${(c.technicianIds || []).length > 0 ? `
@@ -100,6 +111,78 @@ const Chantier = {
               <p style="white-space:pre-wrap">${escapeHtml(c.description || '—')}</p>
               <h3>Tâches</h3>
               <p style="white-space:pre-wrap">${escapeHtml(c.tasks || '—')}</p>
+            </div>
+          </div>
+
+          ${(() => {
+            const budget    = Number(c.hours)     || 0;
+            const done      = Number(c.hoursDone) || 0;
+            const remaining = budget - done;
+            const pct       = budget > 0 ? Math.min(100, Math.round((done / budget) * 100)) : 0;
+            const over      = budget > 0 && remaining < 0;
+            const barColor  = over ? 'var(--danger)' : (pct >= 90 ? 'var(--warning)' : 'var(--success)');
+            const barWidth  = budget > 0 ? Math.min(100, (done / budget) * 100) : 0;
+            const canEditHours = scope === 'admin' || (c.technicianIds || []).includes(Auth.current.id);
+            return `
+            <div class="card mb-2">
+              <div class="card-header"><h2>${icon('clock')} Heures chantier</h2></div>
+              <div class="card-body">
+                <div class="kpi-grid" style="margin-bottom:14px">
+                  <div class="kpi"><div class="kpi-icon">${icon('clock')}</div><div><div class="kpi-value">${budget.toFixed(1)} h</div><div class="kpi-label">Budget alloué</div></div></div>
+                  <div class="kpi"><div class="kpi-icon warning">${icon('wrench')}</div><div><div class="kpi-value">${done.toFixed(1)} h</div><div class="kpi-label">Réalisées</div></div></div>
+                  <div class="kpi"><div class="kpi-icon ${over?'danger':'success'}">${icon(over?'alert':'check')}</div><div><div class="kpi-value" style="color:${over?'var(--danger)':'var(--success)'}">${remaining.toFixed(1)} h</div><div class="kpi-label">${over ? 'Dépassement' : 'Marge restante'}</div></div></div>
+                </div>
+                ${budget > 0 ? `
+                  <div style="background:var(--bg);border-radius:8px;height:14px;overflow:hidden;border:1px solid var(--border)">
+                    <div style="height:100%;width:${barWidth}%;background:${barColor};transition:width .3s"></div>
+                  </div>
+                  <p class="muted" style="font-size:12px;margin:6px 0 12px">
+                    ${pct}% du budget consommé.
+                    ${over ? `<strong style="color:var(--danger)"> Dépassement de ${Math.abs(remaining).toFixed(1)} h.</strong>` : ''}
+                  </p>
+                ` : '<p class="muted" style="font-size:12px;margin:0 0 12px">Aucun budget saisi (modifiable par l\\'admin via la fiche chantier).</p>'}
+                ${canEditHours ? `
+                  <div class="form-row" style="gap:8px;align-items:flex-end">
+                    <div class="form-group" style="flex:0 0 220px;margin-bottom:0">
+                      <label>Saisir les heures réalisées</label>
+                      <input class="input" type="number" min="0" step="0.25" id="cha-hours-input" value="${done}">
+                    </div>
+                    <button class="btn" id="cha-hours-save">${icon('check')} Enregistrer</button>
+                  </div>
+                ` : ''}
+              </div>
+            </div>`;
+          })()}
+
+          <div class="card mb-2">
+            <div class="card-header">
+              <h2>${icon('calendar')} Planifications</h2>
+              ${canEdit ? `<button class="btn btn-sm" id="cha-add-sched">${icon('plus')} Ajouter une planification</button>` : ''}
+            </div>
+            <div class="card-body">
+              ${(() => {
+                const schedules = Array.isArray(c.schedules) ? [...c.schedules] : [];
+                // Ligne legacy : scheduledAt + duration converti en heures
+                if (c.scheduledAt) {
+                  schedules.unshift({
+                    id: 'legacy',
+                    scheduledAt: c.scheduledAt,
+                    durationHours: (c.duration || 1) * 8,
+                    comment: 'Planning principal (depuis fiche)',
+                  });
+                }
+                if (schedules.length === 0) return '<p class="muted">Aucune planification enregistrée.</p>';
+                return `<table class="data-table" style="margin:-12px 0">
+                  <thead><tr><th>Date</th><th>Durée (heures)</th><th>Commentaire</th><th></th></tr></thead>
+                  <tbody>${schedules.map(s => `
+                    <tr>
+                      <td data-label="Date">${fmtDate(s.scheduledAt)}</td>
+                      <td data-label="Durée">${(s.durationHours || 0).toFixed(1)} h</td>
+                      <td data-label="Commentaire">${escapeHtml(s.comment || '')}</td>
+                      <td class="actions">${canEdit && s.id !== 'legacy' ? `<button class="btn-icon danger" data-sched-del="${s.id}">${icon('trash')}</button>` : ''}</td>
+                    </tr>`).join('')}</tbody>
+                </table>`;
+              })()}
             </div>
           </div>
 
@@ -164,6 +247,72 @@ const Chantier = {
       toast('Commentaire ajouté');
       Router.render();
     });
+
+    $('#cha-hours-save')?.addEventListener('click', async () => {
+      const val = parseFloat($('#cha-hours-input').value);
+      if (isNaN(val) || val < 0) { toast('Heures invalides', 'error'); return; }
+      const btn = $('#cha-hours-save'); if (btn) btn.disabled = true;
+      try {
+        await DB.setChantierHours(id, val);
+        toast('Heures enregistrées');
+      } catch (_) { /* déjà toastée */ }
+      finally { if (btn) btn.disabled = false; }
+    });
+
+    // Ajout d'une planification
+    $('#cha-add-sched')?.addEventListener('click', () => Chantier._openScheduleModal(id));
+    // Suppression d'une planification
+    document.querySelectorAll('[data-sched-del]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const schedId = btn.getAttribute('data-sched-del');
+        confirmDialog('Supprimer cette planification ?', async () => {
+          await DB.removeChantierSchedule(id, schedId);
+          toast('Planification supprimée');
+        });
+      });
+    });
+  },
+
+  _openScheduleModal(chantierId) {
+    openModal({
+      title: 'Nouvelle planification',
+      body: `
+        <form id="sch-form">
+          <div class="form-row">
+            <div class="form-group"><label>Date *</label>
+              <input class="input" type="date" name="scheduledAt" required>
+            </div>
+            <div class="form-group"><label>Durée (heures) *</label>
+              <input class="input" type="number" name="durationHours" min="0" step="0.5" value="8" required>
+            </div>
+          </div>
+          <div class="form-group"><label>Commentaire</label>
+            <input class="input" name="comment" placeholder="Optionnel">
+          </div>
+        </form>
+      `,
+      footer: `
+        <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
+        <button class="btn" id="sch-save">${icon('check')} Ajouter</button>
+      `,
+      onOpen(modal) {
+        modal.parentElement.querySelector('#sch-save').onclick = async () => {
+          const data = Object.fromEntries(new FormData(modal.querySelector('#sch-form')));
+          if (!data.scheduledAt) { toast('Date requise', 'error'); return; }
+          try {
+            await DB.addChantierSchedule(chantierId, {
+              scheduledAt:   new Date(data.scheduledAt).toISOString(),
+              durationHours: parseFloat(data.durationHours) || 8,
+              comment:       data.comment || undefined,
+            });
+            closeModal();
+            toast('Planification ajoutée');
+            Router.render();
+          } catch (_) { /* déjà toastée */ }
+        };
+      },
+    });
   },
 
   /* =========================== ADMIN MODAL =========================== */
@@ -221,6 +370,9 @@ const Chantier = {
             <div class="form-group"><label>Durée (jours)</label>
               <input class="input" type="number" min="0" step="1" name="duration" value="${c && c.duration != null ? c.duration : 1}">
             </div>
+            <div class="form-group"><label>Nombre d'heures chantier (budget)</label>
+              <input class="input" type="number" min="0" step="0.5" name="hours" value="${c && c.hours != null ? c.hours : 0}">
+            </div>
           </div>
           <div class="form-group">
             <label>Techniciens affectés</label>
@@ -272,6 +424,7 @@ const Chantier = {
           data.lat = data.lat === '' ? null : parseFloat(data.lat);
           data.lng = data.lng === '' ? null : parseFloat(data.lng);
           data.duration = data.duration === '' ? 0 : parseInt(data.duration);
+          data.hours = data.hours === '' ? 0 : parseFloat(data.hours);
           data.scheduledAt = data.scheduledAt ? new Date(data.scheduledAt).toISOString() : null;
           // Collect checked technician IDs (FormData only keeps last value for repeated names)
           data.technicianIds = [...form.querySelectorAll('input[name="techId"]:checked')].map(cb => cb.value);

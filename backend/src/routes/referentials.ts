@@ -17,6 +17,7 @@ const clientSchema = z.object({
   email: z.string().email().or(z.literal('')).optional(),
   phone: z.string().optional(),
   address: z.string().optional(),
+  portalEnabled: z.boolean().optional(),
 });
 
 export async function clientsRoutes(app: FastifyInstance) {
@@ -152,6 +153,7 @@ const techSchema = z.object({
   phone: z.string().optional(),
   specialty: z.string().optional(),
   color: z.string().optional(),
+  active: z.boolean().optional(),
 });
 
 function publicUser(u: any) {
@@ -206,6 +208,7 @@ const adminSchema = z.object({
   email: z.string().email().or(z.literal('')).optional(),
   superAdmin: z.boolean().optional(),
   permissions: z.record(z.string(), z.enum(['none','read','write'])).optional(),
+  active: z.boolean().optional(),
 });
 
 export async function adminsRoutes(app: FastifyInstance) {

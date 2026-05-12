@@ -4,6 +4,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { nextNumber } from '../lib/numbering.js';
+import { emit, html as mailHtml } from '../lib/notifier.js';
 
 // ============================================================
 // PRESQUE-ACCIDENTS (/accidents)
@@ -59,7 +60,17 @@ export async function accidentsRoutes(app: FastifyInstance) {
         createdById: req.auth.id, createdByName: req.auth.name,
         photos: { create: (d.photos ?? []).map((p, i) => ({ url: p.url, position: i })) },
       },
-      include: { photos: true },
+      include: { photos: true, client: true, site: true },
+    });
+    emit(app.prisma, 'accident_created', {
+      subject: `[GMAO] Nouveau presque-accident ${a.number}`,
+      bodyHtml: mailHtml(`Presque-accident déclaré`, [
+        `<strong>${a.number} — ${a.title}</strong>`,
+        `Client : ${a.client?.name ?? ''} — Site : ${a.site?.name ?? ''}`,
+        `Nature du risque : ${a.riskNature}`,
+        `Description : ${a.description}`,
+        `Déclaré par : ${a.createdByName ?? ''}`,
+      ]),
     });
     return reply.code(201).send(a);
   });
@@ -140,6 +151,17 @@ export async function derogationsRoutes(app: FastifyInstance) {
         createdById: req.auth.id, createdByName: req.auth.name,
         photos: { create: (d.photos ?? []).map((p, i) => ({ url: p.url, position: i })) },
       },
+      include: { client: true, site: true },
+    });
+    emit(app.prisma, 'derogation_created', {
+      subject: `[GMAO] Nouvelle dérogation ${der.number}`,
+      bodyHtml: mailHtml(`Nouvelle demande de dérogation`, [
+        `<strong>${der.number} — ${der.title}</strong>`,
+        `Client : ${der.client?.name ?? ''} — Site : ${der.site?.name ?? ''}`,
+        `Période : ${new Date(der.dateStart).toLocaleDateString('fr-FR')} → ${new Date(der.dateEnd).toLocaleDateString('fr-FR')}`,
+        `Analyse du risque : ${der.riskAnalysis}`,
+        `Demandée par : ${der.createdByName ?? ''}`,
+      ]),
     });
     return reply.code(201).send(der);
   });
@@ -148,7 +170,23 @@ export async function derogationsRoutes(app: FastifyInstance) {
   app.patch('/:id', { preHandler: app.requireAdminCan('derogations', 'write') }, async (req, reply) => {
     const parsed = derogationAdminPatch.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request' });
-    const d = await app.prisma.derogation.update({ where: { id: (req.params as any).id }, data: parsed.data });
+    const id = (req.params as any).id;
+    const prev = await app.prisma.derogation.findUnique({ where: { id } });
+    const d = await app.prisma.derogation.update({
+      where: { id },
+      data: parsed.data,
+      include: { client: true, site: true },
+    });
+    if (parsed.data.status === 'valide' && prev?.status !== 'valide') {
+      emit(app.prisma, 'derogation_validated', {
+        subject: `[GMAO] Dérogation ${d.number} validée`,
+        bodyHtml: mailHtml(`Dérogation validée`, [
+          `<strong>${d.number} — ${d.title}</strong>`,
+          `Client : ${d.client?.name ?? ''} — Site : ${d.site?.name ?? ''}`,
+          d.preventiveMeasures ? `Mesures de prévention : ${d.preventiveMeasures}` : '',
+        ].filter(Boolean)),
+      });
+    }
     return d;
   });
 
@@ -249,6 +287,14 @@ export async function bulletinsRoutes(app: FastifyInstance) {
         bulletinDate: d.bulletinDate ? new Date(d.bulletinDate) : null,
         info: d.info, createdById: req.auth.id,
       },
+    });
+    emit(app.prisma, 'bulletin_published', {
+      subject: `[GMAO] Nouveau bulletin ${b.number} — ${b.title}`,
+      bodyHtml: mailHtml(`Bulletin NOUT ZINFOS — ${b.title}`, [
+        `Numéro : <strong>${b.number}</strong>`,
+        b.bulletinDate ? `Date : ${new Date(b.bulletinDate).toLocaleDateString('fr-FR')}` : '',
+        b.info,
+      ].filter(Boolean)),
     });
     return reply.code(201).send(b);
   });

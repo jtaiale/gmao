@@ -23,6 +23,8 @@ import { statsRoutes } from './routes/stats.js';
 import { exportsRoutes } from './routes/exports.js';
 import { uploadsRoutes } from './routes/uploads.js';
 import { pdfRoutes } from './routes/pdf.js';
+import { leavesRoutes } from './routes/leaves.js';
+import { notificationsRoutes } from './routes/notifications.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -66,6 +68,8 @@ async function bootstrap() {
   app.register(statsRoutes,       { prefix: '/api/stats' });
   app.register(exportsRoutes,     { prefix: '/api/exports' });
   app.register(uploadsRoutes,     { prefix: '/api/uploads' });
+  app.register(leavesRoutes,      { prefix: '/api/leaves' });
+  app.register(notificationsRoutes, { prefix: '/api/notifications' });
 
   app.get('/api/health', async () => ({ status: 'ok', time: new Date().toISOString() }));
 

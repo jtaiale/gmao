@@ -8,6 +8,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { nextNumber } from '../lib/numbering.js';
+import { emit, html as mailHtml } from '../lib/notifier.js';
 
 const STATUSES = ['nouveau', 'planifie', 'en_cours', 'resolu', 'cloture'] as const;
 const PRIORITIES = ['basse', 'normale', 'haute', 'urgente'] as const;
@@ -152,7 +153,16 @@ export async function ticketsRoutes(app: FastifyInstance) {
           create: (data.technicianIds || []).map(tid => ({ technicianId: tid })),
         },
       },
-      include: { technicians: true },
+      include: { technicians: true, client: true, site: true },
+    });
+    emit(app.prisma, 'ticket_created', {
+      subject: `[GMAO] Nouveau ticket ${t.number}`,
+      bodyHtml: mailHtml(`Nouveau ticket ${t.number}`, [
+        `<strong>${t.title}</strong>`,
+        `Client : ${t.client?.name ?? ''} — Site : ${t.site?.name ?? ''}`,
+        `Priorité : ${t.priority}`,
+        t.description ? `Description : ${t.description}` : '',
+      ].filter(Boolean)),
     });
     return reply.code(201).send({ id: t.id, number: t.number });
   });
@@ -211,6 +221,19 @@ export async function ticketsRoutes(app: FastifyInstance) {
         comments: { orderBy: { createdAt: 'asc' } },
       },
     });
+    // Notification : ticket complété
+    if ((updated.status === 'resolu' || updated.status === 'cloture') &&
+        t.status !== updated.status) {
+      emit(app.prisma, 'ticket_completed', {
+        subject: `[GMAO] Ticket ${updated.number} ${updated.status}`,
+        bodyHtml: mailHtml(`Ticket ${updated.status === 'cloture' ? 'clôturé' : 'résolu'}`, [
+          `<strong>${updated.number} — ${updated.title}</strong>`,
+          `Client : ${updated.client?.name ?? ''} — Site : ${updated.site?.name ?? ''}`,
+          `Heures réalisées : ${(updated.hours ?? 0).toFixed(2)} h, Déplacements : ${updated.tripCount ?? 0}`,
+          updated.interventionDescription ? `Intervention : ${updated.interventionDescription}` : '',
+        ].filter(Boolean)),
+      });
+    }
     return serializeFull(updated);
   });
 

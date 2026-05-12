@@ -130,6 +130,69 @@ function downloadCSV(filename, rows) {
   toast('Export téléchargé', 'success');
 }
 
+/* ---------- Jours fériés France (métropole + Réunion) ---------- */
+// Cache par année pour éviter de recalculer
+const _holidayCache = {};
+function _easterDate(year) {
+  // Algorithme de Gauss (date de Pâques, calendrier grégorien)
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19*a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2*e + 2*i - h - k) % 7;
+  const m = Math.floor((a + 11*h + 22*l) / 451);
+  const month = Math.floor((h + l - 7*m + 114) / 31);
+  const day = ((h + l - 7*m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+function _addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function frenchHolidays(year) {
+  if (_holidayCache[year]) return _holidayCache[year];
+  const easter = _easterDate(year);
+  const list = [
+    { date: new Date(year, 0, 1),   name: "Jour de l'an" },
+    { date: _addDays(easter, 1),    name: "Lundi de Pâques" },
+    { date: new Date(year, 4, 1),   name: "Fête du Travail" },
+    { date: new Date(year, 4, 8),   name: "Victoire 1945" },
+    { date: _addDays(easter, 39),   name: "Ascension" },
+    { date: _addDays(easter, 50),   name: "Lundi de Pentecôte" },
+    { date: new Date(year, 6, 14),  name: "Fête nationale" },
+    { date: new Date(year, 7, 15),  name: "Assomption" },
+    { date: new Date(year, 10, 1),  name: "Toussaint" },
+    { date: new Date(year, 10, 11), name: "Armistice 1918" },
+    { date: new Date(year, 11, 20), name: "Abolition de l'esclavage" }, // spécifique Réunion
+    { date: new Date(year, 11, 25), name: "Noël" },
+  ];
+  list.forEach(h => h.date.setHours(0,0,0,0));
+  _holidayCache[year] = list;
+  return list;
+}
+function holidayOn(date) {
+  if (!date) return null;
+  const d = new Date(date); d.setHours(0,0,0,0);
+  const list = frenchHolidays(d.getFullYear());
+  return list.find(h => h.date.getTime() === d.getTime()) || null;
+}
+function isHoliday(date) { return !!holidayOn(date); }
+
+const LEAVE_TYPES = [
+  { id: 'conge',     label: 'Congés' },
+  { id: 'rtt',       label: 'RTT' },
+  { id: 'maladie',   label: 'Maladie' },
+  { id: 'formation', label: 'Formation' },
+  { id: 'autre',     label: 'Absence' },
+];
+function _leaveLabel(type) {
+  const t = LEAVE_TYPES.find(x => x.id === type);
+  return t ? t.label : (type || 'Absence');
+}
+
 /* ---------- Stockage localStorage : suivi de l'occupation ---------- */
 const STORAGE_HARD_CAP = 4 * 1024 * 1024; // 4 Mo (sous le quota navigateur ~5 Mo)
 function getLocalStorageSizeBytes() {

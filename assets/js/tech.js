@@ -56,55 +56,64 @@ const TechViews = {
   },
 
   /* =========================== PLANNING GRAPHIQUE =========================== */
-  planningGraphical(weekOffset) {
+  planningGraphical(offset = 0, viewMode) {
+    const mode = viewMode === 'month' ? 'month' : 'week';
+    return mode === 'month' ? this._techPlanningMonth(parseInt(offset)||0) : this._techPlanningWeek(parseInt(offset)||0);
+  },
+
+  _techPlanningToolbar(mode, offset, label) {
+    const w = mode === 'week';
+    return `
+      <div class="planning-controls">
+        <button class="btn btn-secondary btn-sm" id="tech-prev">${icon('back')} Précédent</button>
+        <button class="btn btn-secondary btn-sm" id="tech-today">Aujourd'hui</button>
+        <button class="btn btn-secondary btn-sm" id="tech-next">Suivant ${icon('back')}</button>
+        <strong>${escapeHtml(label)}</strong>
+        <div style="margin-left:auto;display:flex;gap:4px;background:var(--bg);padding:2px;border-radius:6px">
+          <a class="btn btn-sm ${w?'':'btn-secondary'}" href="#/tech/planning/week/0">Semaine</a>
+          <a class="btn btn-sm ${w?'btn-secondary':''}" href="#/tech/planning/month/0">Mois</a>
+        </div>
+      </div>
+    `;
+  },
+
+  _techPlanningWeek(off) {
     const me = Auth.current.id;
-    const off = parseInt(weekOffset) || 0;
     const monday = this._mondayOf(new Date(), off);
     const days = Array.from({length: 7}, (_, i) => {
       const d = new Date(monday); d.setDate(monday.getDate() + i); return d;
     });
     const dayLabels = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-
-    const eventsFor = (day) => DB.list('tickets')
-      .filter(t => DB.ticketHasTech(t, me) && DB.ticketCoversDay(t, day));
-
-    const inRange = (day, scheduledAt, duration) => {
-      if (!scheduledAt) return false;
-      const start = new Date(scheduledAt); start.setHours(0,0,0,0);
-      const dur = Math.max(1, parseInt(duration) || 1);
-      const end = new Date(start); end.setDate(start.getDate() + dur - 1); end.setHours(23,59,59,999);
-      const d = new Date(day); d.setHours(12,0,0,0);
-      return d >= start && d <= end;
-    };
-    const chantiersFor = (day) => (DB.list('chantiers') || [])
-      .filter(c => (c.technicianIds || []).includes(me) && inRange(day, c.scheduledAt, c.duration));
-
+    const eventsFor = (day) => DB.list('tickets').filter(t => DB.ticketHasTech(t, me) && DB.ticketCoversDay(t, day));
+    const chantiersFor = (day) => (DB.list('chantiers') || []).filter(c => DB.chantierCoversDay(c, me, day));
     const myColor = DB.techColor(me);
 
     setTimeout(() => {
-      $('#tech-prev')?.addEventListener('click', () => location.hash = `#/tech/planning/${off - 1}`);
-      $('#tech-next')?.addEventListener('click', () => location.hash = `#/tech/planning/${off + 1}`);
-      $('#tech-today')?.addEventListener('click', () => location.hash = `#/tech/planning/0`);
+      $('#tech-prev') ?.addEventListener('click', () => location.hash = `#/tech/planning/week/${off - 1}`);
+      $('#tech-next') ?.addEventListener('click', () => location.hash = `#/tech/planning/week/${off + 1}`);
+      $('#tech-today')?.addEventListener('click', () => location.hash = `#/tech/planning/week/0`);
     }, 0);
 
     return `
-      <div class="planning-controls">
-        <button class="btn btn-secondary btn-sm" id="tech-prev">${icon('back')} Précédente</button>
-        <button class="btn btn-secondary btn-sm" id="tech-today">Aujourd'hui</button>
-        <button class="btn btn-secondary btn-sm" id="tech-next">Suivante ${icon('back')}</button>
-        <strong>Semaine du ${days[0].toLocaleDateString('fr-FR', { day:'2-digit', month:'long', year:'numeric' })}</strong>
-      </div>
+      ${this._techPlanningToolbar('week', off,
+        `Semaine du ${days[0].toLocaleDateString('fr-FR', { day:'2-digit', month:'long', year:'numeric' })}`)}
 
       <div class="planning-grid mb-2">
         <table class="planning-table">
           <thead>
-            <tr>${days.map((d,i) => `
-              <th>${dayLabels[i]} ${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}</th>
-            `).join('')}</tr>
+            <tr>${days.map((d,i) => {
+              const h = holidayOn(d);
+              return `<th class="${h?'pl-holiday':''}">${dayLabels[i]} ${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}${h?`<br><small style="color:var(--danger);font-weight:400">${escapeHtml(h.name)}</small>`:''}</th>`;
+            }).join('')}</tr>
           </thead>
           <tbody>
-            <tr>${days.map(d => `
-              <td class="planning-cell">
+            <tr>${days.map(d => {
+              const wknd = d.getDay() === 0 || d.getDay() === 6;
+              const hol = holidayOn(d);
+              const lv  = DB.leaveOn(me, d);
+              const cls = `planning-cell ${wknd?'pl-weekend':''} ${hol?'pl-holiday':''} ${lv?'pl-leave':''}`;
+              if (lv) return `<td class="${cls}"><span class="pl-leave-badge" title="${escapeHtml(lv.comment||'')}">${escapeHtml(_leaveLabel(lv.type))}</span></td>`;
+              return `<td class="${cls}">
                 ${eventsFor(d).map(ev => `
                   <a class="planning-event" style="background:${myColor}" href="#/tech/ticket/${ev.id}">
                     <span class="num">${ev.number}</span>
@@ -115,9 +124,73 @@ const TechViews = {
                     <span class="num">${ch.number}</span><span class="tag">CHA</span>
                     <span class="title">${escapeHtml(ch.name.slice(0, 28))}${ch.name.length>28?'…':''}</span>
                   </a>`).join('')}
-              </td>`).join('')}</tr>
+              </td>`;
+            }).join('')}</tr>
           </tbody>
         </table>
+      </div>
+    `;
+  },
+
+  _techPlanningMonth(off) {
+    const me = Auth.current.id;
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth() + off, 1);
+    const year = first.getFullYear();
+    const month = first.getMonth();
+    const start = new Date(first);
+    const dow = (start.getDay() || 7) - 1;
+    start.setDate(start.getDate() - dow);
+    start.setHours(0,0,0,0);
+    const cells = Array.from({length: 42}, (_, i) => {
+      const d = new Date(start); d.setDate(start.getDate() + i); return d;
+    });
+    const myColor = DB.techColor(me);
+    const monthLabel = first.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+
+    setTimeout(() => {
+      $('#tech-prev') ?.addEventListener('click', () => location.hash = `#/tech/planning/month/${off - 1}`);
+      $('#tech-next') ?.addEventListener('click', () => location.hash = `#/tech/planning/month/${off + 1}`);
+      $('#tech-today')?.addEventListener('click', () => location.hash = `#/tech/planning/month/0`);
+    }, 0);
+
+    const dayHeaders = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+    return `
+      ${this._techPlanningToolbar('month', off, monthLabel.charAt(0).toUpperCase()+monthLabel.slice(1))}
+
+      <div class="planning-month mb-2">
+        <div class="pl-month-head">${dayHeaders.map(h => `<div>${h}</div>`).join('')}</div>
+        <div class="pl-month-grid">
+          ${cells.map(d => {
+            const inMonth = d.getMonth() === month;
+            const isToday = (new Date()).toDateString() === d.toDateString();
+            const hol = holidayOn(d);
+            const lv  = DB.leaveOn(me, d);
+            const evs = DB.list('tickets').filter(t => DB.ticketHasTech(t, me) && DB.ticketCoversDay(t, d));
+            const chs = (DB.list('chantiers') || []).filter(c => DB.chantierCoversDay(c, me, d));
+            const items = [
+              ...evs.map(ev => ({ kind: 't', id: ev.id, label: ev.number, title: ev.title })),
+              ...chs.map(ch => ({ kind: 'c', id: ch.id, label: ch.number, title: ch.name })),
+            ];
+            const max = 3;
+            const visible = items.slice(0, max);
+            const more = items.length - visible.length;
+            return `
+              <div class="pl-month-cell ${inMonth?'':'pl-out'} ${isToday?'pl-today':''} ${hol?'pl-holiday':''}">
+                <div class="pl-month-day">
+                  <span class="pl-day-num">${d.getDate()}</span>
+                  ${hol ? `<span class="pl-day-holiday" title="${escapeHtml(hol.name)}">${escapeHtml(hol.name.slice(0,14))}${hol.name.length>14?'…':''}</span>` : ''}
+                </div>
+                ${lv ? `<span class="pl-leave-badge" title="${escapeHtml(lv.comment||'')}">${escapeHtml(_leaveLabel(lv.type))}</span>` : ''}
+                ${visible.map(it => `
+                  <a class="pl-month-event" style="background:${it.kind==='c'?'#6d28d9':myColor}" href="#/tech/${it.kind==='c'?'chantier':'ticket'}/${it.id}" title="${escapeHtml(it.label+' — '+it.title)}">
+                    ${it.kind==='c'?'<span class="tag">CHA</span>':''}<span class="num">${escapeHtml(it.label.slice(0,12))}</span>
+                  </a>`).join('')}
+                ${more > 0 ? `<div class="pl-month-more">+${more}</div>` : ''}
+              </div>`;
+          }).join('')}
+        </div>
       </div>
     `;
   },

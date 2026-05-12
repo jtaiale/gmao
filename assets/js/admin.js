@@ -524,7 +524,9 @@ const AdminViews = {
         { label: 'Contact', render: c => escapeHtml(c.contact) },
         { label: 'Email', render: c => escapeHtml(c.email) },
         { label: 'Téléphone', render: c => escapeHtml(c.phone) },
-        { label: 'Identifiant', render: c => `<code>${escapeHtml(c.login)}</code>` },
+        { label: 'Portail', render: c => c.portalEnabled === false
+            ? '<span class="badge status-cloture">Désactivé</span>'
+            : '<span class="badge status-resolu">Actif</span>' },
       ]
     });
   },
@@ -544,18 +546,23 @@ const AdminViews = {
           </div>
           <div class="form-group"><label>Email</label><input class="input" type="email" name="email" value="${c?escapeHtml(c.email):''}"></div>
           <div class="form-group"><label>Adresse</label><input class="input" name="address" value="${c?escapeHtml(c.address):''}"></div>
-          <h3 style="margin-top:8px">Accès portail client</h3>
-          <div class="form-row">
-            <div class="form-group"><label>Identifiant</label><input class="input" name="login" required value="${c?escapeHtml(c.login):''}"></div>
-            <div class="form-group"><label>Mot de passe</label><input class="input" name="password" required value="${c?escapeHtml(c.password):''}"></div>
+          <h3 style="margin-top:8px">Portail client</h3>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" name="portalEnabled" ${c && c.portalEnabled === false ? '' : 'checked'}>
+              Activer le portail client (connexion autorisée)
+            </label>
+            <p class="muted" style="font-size:12px;margin:4px 0 0">Si décoché, l'utilisateur client ne pourra plus se connecter.</p>
           </div>
         </form>
       `,
       footer: `<button class="btn btn-secondary" onclick="closeModal()">Annuler</button><button class="btn" id="cli-save">${icon('check')} Enregistrer</button>`,
       onOpen(modal) {
         modal.parentElement.querySelector('#cli-save').onclick = () => {
-          const data = Object.fromEntries(new FormData(modal.querySelector('#cli-form')));
-          if (!data.name || !data.login) { toast('Champs requis manquants', 'error'); return; }
+          const form = modal.querySelector('#cli-form');
+          const data = Object.fromEntries(new FormData(form));
+          data.portalEnabled = form.querySelector('[name="portalEnabled"]').checked;
+          if (!data.name || !data.code) { toast('Champs requis manquants', 'error'); return; }
           if (c) DB.update('clients', c.id, data); else DB.insert('clients', data);
           closeModal(); toast('Client enregistré'); Router.render();
         };
@@ -691,6 +698,161 @@ const AdminViews = {
     });
   },
 
+  /* =========================== NOTIFICATIONS MAIL =========================== */
+  async notifications() {
+    // Cache la liste des events pour ne pas refaire la requête à chaque modal
+    if (!this._notifEvents) {
+      try { this._notifEvents = await api.notifications.events(); }
+      catch { this._notifEvents = []; }
+    }
+    const events = this._notifEvents || [];
+    let rules = [];
+    try { rules = await api.notifications.list(); } catch { rules = []; }
+
+    setTimeout(() => {
+      $('#notif-add')?.addEventListener('click', () => AdminViews.openNotificationModal(null, events));
+      document.querySelectorAll('[data-notif-edit]').forEach(b => b.onclick = () => {
+        const r = rules.find(x => x.id === b.dataset.notifEdit);
+        AdminViews.openNotificationModal(r, events);
+      });
+      document.querySelectorAll('[data-notif-del]').forEach(b => b.onclick = () => {
+        confirmDialog('Supprimer cette règle ?', async () => {
+          await api.notifications.delete(b.dataset.notifDel);
+          toast('Règle supprimée');
+          Router.render();
+        });
+      });
+      document.querySelectorAll('[data-notif-toggle]').forEach(cb => cb.onclick = async () => {
+        try {
+          await api.notifications.update(cb.dataset.notifToggle, { active: cb.checked });
+          toast(cb.checked ? 'Règle activée' : 'Règle désactivée');
+        } catch (e) { cb.checked = !cb.checked; toast('Échec : ' + (e?.message||''), 'error'); }
+      });
+    }, 0);
+
+    const eventLabel = (k) => (events.find(e => e.key === k)?.label) || k;
+    const recipientLabel = (r) => {
+      if (r.recipientType === 'email') return `<code>${escapeHtml(r.email || '')}</code>`;
+      if (r.recipientType === 'user' && r.userId) {
+        const u = DB.list('technicians').find(t => t.id === r.userId)
+              || DB.list('admins').find(a => a.id === r.userId);
+        return u ? escapeHtml(u.name) + ` <small class="muted">(${u.kind || ''})</small>` : '<span class="muted">utilisateur inconnu</span>';
+      }
+      return '<span class="muted">—</span>';
+    };
+
+    return `
+      <div class="card mb-2">
+        <div class="card-header">
+          <h2>${icon('inbox')} Règles d'envoi mail</h2>
+          <button class="btn" id="notif-add">${icon('plus')} Nouvelle règle</button>
+        </div>
+        <div class="card-body tight">
+          ${rules.length === 0 ? `<div class="empty">${icon('inbox')}<div>Aucune règle de notification</div></div>` :
+            `<table class="data-table">
+              <thead><tr><th>Active</th><th>Libellé</th><th>Événement</th><th>Destinataire</th><th></th></tr></thead>
+              <tbody>${rules.map(r => `
+                <tr>
+                  <td data-label="Active"><input type="checkbox" data-notif-toggle="${r.id}" ${r.active?'checked':''}></td>
+                  <td data-label="Libellé">${escapeHtml(r.label || '')}</td>
+                  <td data-label="Événement"><span class="badge dot priority-normale">${escapeHtml(eventLabel(r.event))}</span></td>
+                  <td data-label="Destinataire">${recipientLabel(r)}</td>
+                  <td class="actions">
+                    <button class="btn-icon" data-notif-edit="${r.id}">${icon('edit')}</button>
+                    <button class="btn-icon danger" data-notif-del="${r.id}">${icon('trash')}</button>
+                  </td>
+                </tr>`).join('')}</tbody>
+            </table>`}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h2>${icon('check')} Configuration SMTP</h2></div>
+        <div class="card-body">
+          <p class="muted" style="font-size:13px;margin-top:0">
+            Les mails sont envoyés via un serveur SMTP configuré côté backend (variables d'environnement
+            <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_USER</code>, <code>SMTP_PASS</code>,
+            <code>SMTP_FROM</code>). Si non configuré, les envois sont uniquement loggés côté serveur
+            (test sans envoi réel). Voyez <code>backend/.env</code> sur le VPS.
+          </p>
+        </div>
+      </div>
+    `;
+  },
+  openNotificationModal(rule, events) {
+    const r = rule || {};
+    const eventOpts = (events || []).map(e =>
+      `<option value="${e.key}" ${r.event===e.key?'selected':''}>${escapeHtml(e.label)}</option>`).join('');
+    const users = [
+      ...DB.list('admins').map(u => ({ id: u.id, label: `${u.name} (admin)` })),
+      ...DB.list('technicians').map(u => ({ id: u.id, label: `${u.name} (tech)` })),
+    ];
+    const userOpts = ['<option value="">— Choisir un utilisateur —</option>',
+      ...users.map(u => `<option value="${u.id}" ${r.userId===u.id?'selected':''}>${escapeHtml(u.label)}</option>`)
+    ].join('');
+
+    openModal({
+      title: r.id ? 'Modifier la règle de notification' : 'Nouvelle règle de notification',
+      body: `
+        <form id="notif-form">
+          <div class="form-group"><label>Libellé (optionnel)</label>
+            <input class="input" name="label" value="${r.label?escapeHtml(r.label):''}" placeholder="Ex : Tickets urgents → support">
+          </div>
+          <div class="form-group"><label>Événement déclencheur *</label>
+            <select class="select" name="event" required>${eventOpts}</select>
+          </div>
+          <div class="form-group"><label>Type de destinataire *</label>
+            <select class="select" name="recipientType" id="notif-rt">
+              <option value="email" ${r.recipientType!=='user'?'selected':''}>Adresse e-mail libre</option>
+              <option value="user"  ${r.recipientType==='user'?'selected':''}>Utilisateur enregistré (admin / technicien)</option>
+            </select>
+          </div>
+          <div class="form-group" id="notif-email-row" ${r.recipientType==='user'?'style="display:none"':''}>
+            <label>Adresse e-mail</label>
+            <input class="input" type="email" name="email" value="${r.email?escapeHtml(r.email):''}" placeholder="qse@argos-oi.re">
+          </div>
+          <div class="form-group" id="notif-user-row" ${r.recipientType==='user'?'':'style="display:none"'}>
+            <label>Utilisateur</label>
+            <select class="select" name="userId">${userOpts}</select>
+            <p class="muted" style="font-size:12px;margin:4px 0 0">L'email enregistré sur la fiche utilisateur sera utilisé.</p>
+          </div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" name="active" ${r.active!==false?'checked':''}> Règle active
+            </label>
+          </div>
+        </form>
+      `,
+      footer: `<button class="btn btn-secondary" onclick="closeModal()">Annuler</button><button class="btn" id="notif-save">${icon('check')} Enregistrer</button>`,
+      onOpen(modal) {
+        const rt = modal.querySelector('#notif-rt');
+        rt.onchange = () => {
+          const isUser = rt.value === 'user';
+          modal.querySelector('#notif-email-row').style.display = isUser ? 'none' : '';
+          modal.querySelector('#notif-user-row').style.display  = isUser ? '' : 'none';
+        };
+        modal.parentElement.querySelector('#notif-save').onclick = async () => {
+          const form = modal.querySelector('#notif-form');
+          const data = Object.fromEntries(new FormData(form));
+          data.active = form.querySelector('[name="active"]').checked;
+          if (!data.event) { toast('Événement requis', 'error'); return; }
+          if (data.recipientType === 'email' && !data.email) { toast('Email requis', 'error'); return; }
+          if (data.recipientType === 'user'  && !data.userId) { toast('Utilisateur requis', 'error'); return; }
+          // Nettoie le champ non utilisé
+          if (data.recipientType === 'email') data.userId = null;
+          else                                data.email  = null;
+          try {
+            if (r.id) await api.notifications.update(r.id, data);
+            else      await api.notifications.create(data);
+            closeModal(); toast('Règle enregistrée'); Router.render();
+          } catch (e) {
+            toast('Échec : ' + (e?.message || ''), 'error');
+          }
+        };
+      },
+    });
+  },
+
   /* =========================== ADMINS =========================== */
   admins() {
     const items = DB.list('admins');
@@ -712,6 +874,9 @@ const AdminViews = {
       columns: [
         { label: 'Nom', render: a => escapeHtml(a.name) + (a.superAdmin ? ' <span class="badge status-resolu" style="margin-left:6px">SUPER</span>' : '') },
         { label: 'Identifiant', render: a => `<code>${escapeHtml(a.login)}</code>` },
+        { label: 'Accès', render: a => a.active === false
+            ? '<span class="badge status-cloture">Désactivé</span>'
+            : '<span class="badge status-resolu">Actif</span>' },
         { label: 'Permissions actives', render: a => {
           if (a.superAdmin) return '<span class="muted">Toutes (super)</span>';
           const p = a.permissions || {};
@@ -746,11 +911,18 @@ const AdminViews = {
             <div class="form-group"><label>Identifiant</label><input class="input" name="login" required value="${a?escapeHtml(a.login):''}"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label>Mot de passe</label><input class="input" name="password" required value="${a?escapeHtml(a.password):''}"></div>
+            <div class="form-group"><label>Mot de passe</label><input class="input" name="password" ${a?'':'required'} placeholder="${a?'(laisser vide pour ne pas changer)':''}"></div>
             <div class="form-group">
               <label>Type</label>
               <input class="input" value="${isSuper?'Super-administrateur (tous droits)':'Administrateur standard'}" disabled>
             </div>
+          </div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" name="active" ${a && a.active === false ? '' : 'checked'} ${isSuper ? 'disabled' : ''}>
+              Compte actif (connexion autorisée)
+            </label>
+            <p class="muted" style="font-size:12px;margin:4px 0 0">Décochez pour désactiver l'accès de l'administrateur. ${isSuper ? '<em>Le super-administrateur ne peut pas être désactivé.</em>' : ''}</p>
           </div>
           <h3 style="margin-top:8px">Droits par menu</h3>
           ${isSuper ? '<p class="muted">Le super-administrateur dispose de tous les droits par défaut.</p>' : ''}
@@ -764,8 +936,13 @@ const AdminViews = {
       footer: `<button class="btn btn-secondary" onclick="closeModal()">Annuler</button><button class="btn" id="adm-save">${icon('check')} Enregistrer</button>`,
       onOpen(modal) {
         modal.parentElement.querySelector('#adm-save').onclick = () => {
-          const data = Object.fromEntries(new FormData(modal.querySelector('#adm-form')));
-          if (!data.name || !data.login || !data.password) { toast('Champs requis manquants', 'error'); return; }
+          const form = modal.querySelector('#adm-form');
+          const data = Object.fromEntries(new FormData(form));
+          const activeBox = form.querySelector('[name="active"]');
+          data.active = isSuper ? true : (activeBox ? activeBox.checked : true);
+          if (!data.name || !data.login) { toast('Champs requis manquants', 'error'); return; }
+          if (!a && !data.password) { toast('Mot de passe requis pour un nouveau compte', 'error'); return; }
+          if (a && !data.password) delete data.password;  // pas de changement
           const newPerms = isSuper ? (a.permissions || defaultAdminPermissions()) : (() => {
             const p = {};
             modal.querySelectorAll('[data-perm]').forEach(s => { p[s.dataset.perm] = s.value; });
@@ -801,9 +978,91 @@ const AdminViews = {
         { label: 'Nom', render: t => `<span class="tech-pill"><span class="tech-color" style="background:${t.color}"></span>${escapeHtml(t.name)}</span>` },
         { label: 'Spécialité', render: t => escapeHtml(t.specialty) },
         { label: 'Email', render: t => escapeHtml(t.email) },
-        { label: 'Téléphone', render: t => escapeHtml(t.phone) },
+        { label: 'Accès', render: t => t.active === false
+            ? '<span class="badge status-cloture">Désactivé</span>'
+            : '<span class="badge status-resolu">Actif</span>' },
         { label: 'Identifiant', render: t => `<code>${escapeHtml(t.login || '')}</code>` },
+        { label: 'Congés', render: t => `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();AdminViews.openLeavesModal('${t.id}')">${icon('calendar')} Gérer (${(DB.list('leaves')||[]).filter(l => l.technicianId === t.id).length})</button>` },
       ]
+    });
+  },
+
+  openLeavesModal(technicianId) {
+    const tech = DB.get('technicians', technicianId);
+    if (!tech) { toast('Technicien introuvable', 'error'); return; }
+    const leaves = (DB.list('leaves') || [])
+      .filter(l => l.technicianId === technicianId)
+      .sort((a,b) => new Date(b.startDate) - new Date(a.startDate));
+    openModal({
+      title: `Congés / absences — ${tech.name}`,
+      size: 'lg',
+      body: `
+        <p class="muted">Saisissez les périodes d'indisponibilité (congés, RTT, maladie, formation, …). Elles apparaissent dans le planning.</p>
+        ${leaves.length === 0 ? '<p class="muted">Aucun congé enregistré.</p>' :
+          `<table class="data-table" style="margin-bottom:14px">
+            <thead><tr><th>Type</th><th>Du</th><th>Au</th><th>Commentaire</th><th></th></tr></thead>
+            <tbody>${leaves.map(l => `
+              <tr>
+                <td data-label="Type"><span class="badge dot priority-normale">${escapeHtml(_leaveLabel(l.type))}</span></td>
+                <td data-label="Du">${fmtDate(l.startDate)}</td>
+                <td data-label="Au">${fmtDate(l.endDate)}</td>
+                <td data-label="Commentaire">${escapeHtml(l.comment || '')}</td>
+                <td class="actions"><button class="btn-icon danger" data-lv-del="${l.id}">${icon('trash')}</button></td>
+              </tr>`).join('')}</tbody>
+          </table>`}
+        <h3 style="margin-top:14px">Ajouter une absence</h3>
+        <form id="lv-form">
+          <div class="form-row">
+            <div class="form-group"><label>Type</label>
+              <select class="select" name="type">
+                ${LEAVE_TYPES.map(t => `<option value="${t.id}">${t.label}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group"><label>Du *</label>
+              <input class="input" type="date" name="startDate" required>
+            </div>
+            <div class="form-group"><label>Au *</label>
+              <input class="input" type="date" name="endDate" required>
+            </div>
+          </div>
+          <div class="form-group"><label>Commentaire (optionnel)</label>
+            <input class="input" name="comment">
+          </div>
+        </form>
+      `,
+      footer: `<button class="btn btn-secondary" onclick="closeModal()">Fermer</button><button class="btn" id="lv-add">${icon('plus')} Ajouter</button>`,
+      onOpen(modal) {
+        // Suppression
+        modal.querySelectorAll('[data-lv-del]').forEach(b => {
+          b.onclick = async () => {
+            const lvId = b.getAttribute('data-lv-del');
+            confirmDialog('Supprimer cette absence ?', async () => {
+              await DB.deleteLeave(lvId);
+              toast('Absence supprimée');
+              // Rouvre le modal pour rafraîchir
+              closeModal();
+              AdminViews.openLeavesModal(technicianId);
+            });
+          };
+        });
+        // Ajout
+        modal.parentElement.querySelector('#lv-add').onclick = async () => {
+          const data = Object.fromEntries(new FormData(modal.querySelector('#lv-form')));
+          if (!data.startDate || !data.endDate) { toast('Dates requises', 'error'); return; }
+          try {
+            await DB.createLeave({
+              technicianId,
+              startDate: new Date(data.startDate).toISOString(),
+              endDate:   new Date(data.endDate + 'T23:59:59').toISOString(),
+              type:      data.type || 'conge',
+              comment:   data.comment || undefined,
+            });
+            toast('Absence ajoutée');
+            closeModal();
+            AdminViews.openLeavesModal(technicianId);
+          } catch (_) { /* erreur déjà toastée */ }
+        };
+      },
     });
   },
   openTechModal(id) {
@@ -827,13 +1086,24 @@ const AdminViews = {
           <h3 style="margin-top:8px">Accès portail technicien</h3>
           <div class="form-row">
             <div class="form-group"><label>Identifiant</label><input class="input" name="login" required value="${t?escapeHtml(t.login||''):''}"></div>
-            <div class="form-group"><label>Mot de passe</label><input class="input" name="password" required value="${t?escapeHtml(t.password||''):''}"></div>
+            <div class="form-group"><label>Mot de passe</label><input class="input" name="password" ${t?'':'required'} placeholder="${t?'(laisser vide pour ne pas changer)':''}"></div>
+          </div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" name="active" ${t && t.active === false ? '' : 'checked'}>
+              Compte actif (connexion autorisée)
+            </label>
+            <p class="muted" style="font-size:12px;margin:4px 0 0">Décochez pour désactiver l'accès du technicien sans supprimer son compte.</p>
           </div>
         </form>`,
       footer: `<button class="btn btn-secondary" onclick="closeModal()">Annuler</button><button class="btn" id="tech-save">${icon('check')} Enregistrer</button>`,
       onOpen(modal) {
         modal.parentElement.querySelector('#tech-save').onclick = () => {
-          const data = Object.fromEntries(new FormData(modal.querySelector('#tech-form')));
+          const form = modal.querySelector('#tech-form');
+          const data = Object.fromEntries(new FormData(form));
+          data.active = form.querySelector('[name="active"]').checked;
+          // Ne pas écraser le mot de passe si vide lors d'une édition
+          if (t && !data.password) delete data.password;
           if (t) DB.update('technicians', t.id, data); else DB.insert('technicians', data);
           closeModal(); toast('Technicien enregistré'); Router.render();
         };
@@ -842,9 +1112,32 @@ const AdminViews = {
   },
 
   /* =========================== PLANNING =========================== */
-  planning(weekOffset = 0) {
+  planning(offset = 0, viewMode) {
+    const mode = viewMode === 'month' ? 'month' : 'week';
+    return mode === 'month'
+      ? this._planningMonth(parseInt(offset) || 0)
+      : this._planningWeek(parseInt(offset) || 0);
+  },
+
+  _planningToolbar(mode, offset, label) {
+    const w = mode === 'week';
+    return `
+      <div class="planning-controls">
+        <button class="btn btn-secondary btn-sm" id="pl-prev">${icon('back')} Précédent</button>
+        <button class="btn btn-secondary btn-sm" id="pl-today">Aujourd'hui</button>
+        <button class="btn btn-secondary btn-sm" id="pl-next">Suivant ${icon('back')}</button>
+        <strong>${escapeHtml(label)}</strong>
+        <div style="margin-left:auto;display:flex;gap:4px;background:var(--bg);padding:2px;border-radius:6px">
+          <a class="btn btn-sm ${w?'':'btn-secondary'}" href="#/admin/planning/week/0">Semaine</a>
+          <a class="btn btn-sm ${w?'btn-secondary':''}" href="#/admin/planning/month/0">Mois</a>
+        </div>
+      </div>
+    `;
+  },
+
+  _planningWeek(weekOffset) {
     const techs = DB.list('technicians');
-    const monday = this._mondayOf(new Date(), parseInt(weekOffset) || 0);
+    const monday = this._mondayOf(new Date(), weekOffset);
     const days = Array.from({length: 7}, (_, i) => {
       const d = new Date(monday); d.setDate(monday.getDate() + i); return d;
     });
@@ -852,60 +1145,60 @@ const AdminViews = {
 
     const eventsFor = (techId, day) => DB.list('tickets')
       .filter(t => DB.ticketHasTech(t, techId) && DB.ticketCoversDay(t, day));
-
-    const inRange = (day, scheduledAt, duration) => {
-      if (!scheduledAt) return false;
-      const start = new Date(scheduledAt); start.setHours(0,0,0,0);
-      const dur = Math.max(1, parseInt(duration) || 1);
-      const end = new Date(start); end.setDate(start.getDate() + dur - 1); end.setHours(23,59,59,999);
-      const d = new Date(day); d.setHours(12,0,0,0);
-      return d >= start && d <= end;
-    };
     const chantiersFor = (techId, day) => (DB.list('chantiers') || [])
-      .filter(c => (c.technicianIds || []).includes(techId) && inRange(day, c.scheduledAt, c.duration));
+      .filter(c => DB.chantierCoversDay(c, techId, day));
 
     const unassigned = DB.list('tickets').filter(t =>
       DB.ticketTechs(t).length === 0 && !['resolu', 'cloture'].includes(t.status)
     );
 
     setTimeout(() => {
-      $('#prev-week')?.addEventListener('click', () => location.hash = `#/admin/planning/${weekOffset - 1}`);
-      $('#next-week')?.addEventListener('click', () => location.hash = `#/admin/planning/${weekOffset + 1}`);
-      $('#today-week')?.addEventListener('click', () => location.hash = `#/admin/planning/0`);
+      $('#pl-prev') ?.addEventListener('click', () => location.hash = `#/admin/planning/week/${weekOffset - 1}`);
+      $('#pl-next') ?.addEventListener('click', () => location.hash = `#/admin/planning/week/${weekOffset + 1}`);
+      $('#pl-today')?.addEventListener('click', () => location.hash = `#/admin/planning/week/0`);
     }, 0);
 
+    const cellClass = (d) => {
+      const wknd = d.getDay() === 0 || d.getDay() === 6;
+      const hol = holidayOn(d);
+      return `planning-cell ${wknd?'pl-weekend':''} ${hol?'pl-holiday':''}`;
+    };
+
     return `
-      <div class="planning-controls">
-        <button class="btn btn-secondary btn-sm" id="prev-week">${icon('back')} Précédente</button>
-        <button class="btn btn-secondary btn-sm" id="today-week">Aujourd'hui</button>
-        <button class="btn btn-secondary btn-sm" id="next-week">Suivante ${icon('back')}</button>
-        <strong>Semaine du ${days[0].toLocaleDateString('fr-FR', { day:'2-digit', month:'long', year:'numeric' })}</strong>
-      </div>
+      ${this._planningToolbar('week', weekOffset,
+        `Semaine du ${days[0].toLocaleDateString('fr-FR', { day:'2-digit', month:'long', year:'numeric' })}`)}
 
       <div class="planning-grid mb-2">
         <table class="planning-table">
           <thead>
             <tr>
               <th class="tech-col">Technicien</th>
-              ${days.map(d => `<th>${fmtDay(d)}</th>`).join('')}
+              ${days.map(d => {
+                const h = holidayOn(d);
+                return `<th class="${h?'pl-holiday':''}">${fmtDay(d)}${h?`<br><small style="color:var(--danger);font-weight:400">${escapeHtml(h.name)}</small>`:''}</th>`;
+              }).join('')}
             </tr>
           </thead>
           <tbody>
             ${techs.map(t => `
               <tr>
                 <td class="tech-col"><span class="tech-pill"><span class="tech-color" style="background:${t.color}"></span>${escapeHtml(t.name)}</span><br><small class="muted">${escapeHtml(t.specialty)}</small></td>
-                ${days.map(d => `<td class="planning-cell">
-                  ${eventsFor(t.id, d).map(ev => `
-                    <a class="planning-event" style="background:${t.color}" href="#/admin/ticket/${ev.id}">
-                      <span class="num">${ev.number}</span>
-                      <span class="title">${escapeHtml(ev.title.slice(0, 32))}${ev.title.length>32?'…':''}</span>
-                    </a>`).join('')}
-                  ${chantiersFor(t.id, d).map(ch => `
-                    <a class="planning-chantier" href="#/admin/chantier/${ch.id}" title="${escapeHtml(ch.name)}">
-                      <span class="num">${ch.number}</span><span class="tag">CHA</span>
-                      <span class="title">${escapeHtml(ch.name.slice(0, 28))}${ch.name.length>28?'…':''}</span>
-                    </a>`).join('')}
-                </td>`).join('')}
+                ${days.map(d => {
+                  const leave = DB.leaveOn(t.id, d);
+                  if (leave) return `<td class="${cellClass(d)} pl-leave"><span class="pl-leave-badge" title="${escapeHtml(leave.comment||'')}">${escapeHtml(_leaveLabel(leave.type))}</span></td>`;
+                  return `<td class="${cellClass(d)}">
+                    ${eventsFor(t.id, d).map(ev => `
+                      <a class="planning-event" style="background:${t.color}" href="#/admin/ticket/${ev.id}">
+                        <span class="num">${ev.number}</span>
+                        <span class="title">${escapeHtml(ev.title.slice(0, 32))}${ev.title.length>32?'…':''}</span>
+                      </a>`).join('')}
+                    ${chantiersFor(t.id, d).map(ch => `
+                      <a class="planning-chantier" href="#/admin/chantier/${ch.id}" title="${escapeHtml(ch.name)}">
+                        <span class="num">${ch.number}</span><span class="tag">CHA</span>
+                        <span class="title">${escapeHtml(ch.name.slice(0, 28))}${ch.name.length>28?'…':''}</span>
+                      </a>`).join('')}
+                  </td>`;
+                }).join('')}
               </tr>`).join('')}
           </tbody>
         </table>
@@ -931,6 +1224,85 @@ const AdminViews = {
       </div>
     `;
   },
+
+  _planningMonth(monthOffset) {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+    const year = first.getFullYear();
+    const month = first.getMonth();
+    // Lundi de la semaine du 1er du mois
+    const start = new Date(first);
+    const dow = (start.getDay() || 7) - 1;
+    start.setDate(start.getDate() - dow);
+    start.setHours(0,0,0,0);
+
+    const cells = Array.from({length: 42}, (_, i) => {
+      const d = new Date(start); d.setDate(start.getDate() + i); return d;
+    });
+    const monthLabel = first.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+
+    const allTickets   = DB.list('tickets');
+    const allChantiers = DB.list('chantiers') || [];
+    const allLeaves    = DB.list('leaves') || [];
+
+    const eventsForDay = (d) => allTickets.filter(t => DB.ticketCoversDay(t, d));
+    const chantiersForDay = (d) => allChantiers.filter(c => DB.chantierCoversDay(c, null, d));
+    const leavesForDay = (d) => allLeaves.filter(l => {
+      const s = new Date(l.startDate); s.setHours(0,0,0,0);
+      const e = new Date(l.endDate);   e.setHours(23,59,59,999);
+      const x = new Date(d); x.setHours(12,0,0,0);
+      return x >= s && x <= e;
+    });
+
+    setTimeout(() => {
+      $('#pl-prev') ?.addEventListener('click', () => location.hash = `#/admin/planning/month/${monthOffset - 1}`);
+      $('#pl-next') ?.addEventListener('click', () => location.hash = `#/admin/planning/month/${monthOffset + 1}`);
+      $('#pl-today')?.addEventListener('click', () => location.hash = `#/admin/planning/month/0`);
+    }, 0);
+
+    const dayHeaders = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+    return `
+      ${this._planningToolbar('month', monthOffset, `${monthLabel.charAt(0).toUpperCase()+monthLabel.slice(1)}`)}
+
+      <div class="planning-month mb-2">
+        <div class="pl-month-head">
+          ${dayHeaders.map(h => `<div>${h}</div>`).join('')}
+        </div>
+        <div class="pl-month-grid">
+          ${cells.map(d => {
+            const inMonth = d.getMonth() === month;
+            const isToday = (new Date()).toDateString() === d.toDateString();
+            const hol = holidayOn(d);
+            const evs = eventsForDay(d);
+            const chs = chantiersForDay(d);
+            const lvs = leavesForDay(d);
+            const items = [
+              ...evs.map(ev => ({ kind: 't', id: ev.id, label: ev.number, title: ev.title, color: DB.techColor(DB.ticketTechs(ev)[0]) })),
+              ...chs.map(ch => ({ kind: 'c', id: ch.id, label: ch.number, title: ch.name, color: '#6d28d9' })),
+            ];
+            const max = 3;
+            const visible = items.slice(0, max);
+            const more = items.length - visible.length;
+            return `
+              <div class="pl-month-cell ${inMonth?'':'pl-out'} ${isToday?'pl-today':''} ${hol?'pl-holiday':''}">
+                <div class="pl-month-day">
+                  <span class="pl-day-num">${d.getDate()}</span>
+                  ${hol ? `<span class="pl-day-holiday" title="${escapeHtml(hol.name)}">${escapeHtml(hol.name.slice(0,16))}${hol.name.length>16?'…':''}</span>` : ''}
+                </div>
+                ${visible.map(it => `
+                  <a class="pl-month-event" style="background:${it.color}" href="#/admin/${it.kind==='c'?'chantier':'ticket'}/${it.id}" title="${escapeHtml(it.label+' — '+it.title)}">
+                    ${it.kind==='c'?'<span class="tag">CHA</span>':''}<span class="num">${escapeHtml(it.label.slice(0,12))}</span>
+                  </a>`).join('')}
+                ${more > 0 ? `<div class="pl-month-more">+${more}</div>` : ''}
+                ${lvs.length > 0 ? `<div class="pl-month-leaves">${lvs.map(l => `<span class="pl-leave-pill" title="${escapeHtml(DB.techName(l.technicianId)+' — '+l.type)}"><span class="tech-color" style="background:${DB.techColor(l.technicianId)}"></span>${escapeHtml(DB.techName(l.technicianId).split(' ')[0])}</span>`).join('')}</div>` : ''}
+              </div>`;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  },
+
   _mondayOf(date, weekOffset = 0) {
     const d = new Date(date);
     const day = d.getDay() || 7;

@@ -170,7 +170,25 @@ const API = (() => {
 
   const chantiers = {
     ...buildResource('/chantiers'),
-    addComment: (id, text) => post(`/chantiers/${id}/comments`, { text }),
+    addComment:    (id, text) => post(`/chantiers/${id}/comments`, { text }),
+    setHours:      (id, hoursDone) => patch(`/chantiers/${id}/hours`, { hoursDone }),
+    addSchedule:   (id, payload) => post(`/chantiers/${id}/schedules`, payload),
+    removeSchedule:(id, scheduleId) => del(`/chantiers/${id}/schedules/${scheduleId}`),
+  };
+
+  const leaves = {
+    list:   (query) => get('/leaves', { query }),
+    create: (data)  => post('/leaves', data),
+    delete: (id)    => del(`/leaves/${id}`),
+  };
+
+  const notifications = {
+    events: () => get('/notifications/events'),
+    list:   () => get('/notifications'),
+    create: (data) => post('/notifications', data),
+    update: (id, data) => patch(`/notifications/${id}`, data),
+    delete: (id) => del(`/notifications/${id}`),
+    log:    () => get('/notifications/log'),
   };
 
   const accidents = {
@@ -249,6 +267,8 @@ const API = (() => {
     technicians,
     admins,
     chantiers,
+    leaves,
+    notifications,
     accidents,
     derogations,
     bulletins,

@@ -28,6 +28,7 @@ model User {
   name        String
   email       String?
   phone       String?
+  active      Boolean  @default(true)   // false = compte désactivé (login refusé)
 
   // Admin
   superAdmin  Boolean  @default(false)
@@ -53,6 +54,7 @@ model User {
   bulletinsCreated   Bulletin[]          @relation("bulletinCreatedBy")
   bulletinReads      BulletinRead[]
   bulletinComments   BulletinComment[]
+  leaves             Leave[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -66,13 +68,14 @@ model User {
 // ============================================================
 
 model Client {
-  id        String   @id @default(uuid())
-  code      String   @unique
-  name      String
-  contact   String?
-  email     String?
-  phone     String?
-  address   String?
+  id            String   @id @default(uuid())
+  code          String   @unique
+  name          String
+  contact       String?
+  email         String?
+  phone         String?
+  address       String?
+  portalEnabled Boolean  @default(true)  // false = portail client désactivé (login refusé)
 
   sites     Site[]
   products  Product[]
@@ -225,6 +228,8 @@ model Chantier {
 
   scheduledAt   DateTime?
   duration      Int      @default(1) // jours
+  hours         Float    @default(0) // budget total homme-heures alloué
+  hoursDone     Float    @default(0) // heures réellement réalisées (saisie tech/admin)
 
   createdById   String?
   createdBy     User?    @relation("chantierCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
@@ -233,9 +238,64 @@ model Chantier {
 
   technicians   ChantierTechnician[]
   comments      ChantierComment[]
+  schedules     ChantierSchedule[]
 
   @@index([clientId])
   @@index([siteId])
+}
+
+model ChantierSchedule {
+  id            String   @id @default(uuid())
+  chantierId    String
+  chantier      Chantier @relation(fields: [chantierId], references: [id], onDelete: Cascade)
+  scheduledAt   DateTime
+  durationHours Float    @default(8)
+  comment       String?
+  createdAt     DateTime @default(now())
+
+  @@index([chantierId])
+  @@index([scheduledAt])
+}
+
+model Leave {
+  id            String   @id @default(uuid())
+  technicianId  String
+  technician    User     @relation(fields: [technicianId], references: [id], onDelete: Cascade)
+  startDate     DateTime
+  endDate       DateTime
+  type          String   @default("conge")   // conge|rtt|maladie|formation|autre
+  comment       String?
+  createdAt     DateTime @default(now())
+
+  @@index([technicianId])
+  @@index([startDate])
+}
+
+model NotificationRule {
+  id            String   @id @default(uuid())
+  label         String?                          // libellé libre pour identifier la règle
+  event         String                           // ticket_created | ticket_completed | accident_created | derogation_created | derogation_validated | bulletin_published
+  recipientType String   @default("email")       // 'email' | 'user'
+  email         String?                          // si recipientType='email'
+  userId        String?                          // si recipientType='user'
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([event, active])
+}
+
+model NotificationLog {
+  id           String   @id @default(uuid())
+  event        String
+  recipient    String                            // email final résolu
+  subject      String
+  ok           Boolean  @default(true)
+  errorMessage String?
+  createdAt    DateTime @default(now())
+
+  @@index([event])
+  @@index([createdAt])
 }
 
 model ChantierTechnician {

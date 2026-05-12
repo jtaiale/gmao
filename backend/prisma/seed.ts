@@ -68,7 +68,7 @@ async function main() {
     create: {
       kind: 'admin', login: 'consult', password: await hash('consult'),
       name: 'Consultation', superAdmin: false,
-      permissions: JSON.stringify({ ...defaultPerms('read'), admins: 'none', exports: 'none' }),
+      permissions: JSON.stringify({ ...defaultPerms('read'), admins: 'none', exports: 'none', notifications: 'none' }),
     },
   });
 
