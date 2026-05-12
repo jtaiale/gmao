@@ -140,7 +140,7 @@ const Chantier = {
                     ${pct}% du budget consommé.
                     ${over ? `<strong style="color:var(--danger)"> Dépassement de ${Math.abs(remaining).toFixed(1)} h.</strong>` : ''}
                   </p>
-                ` : '<p class="muted" style="font-size:12px;margin:0 0 12px">Aucun budget saisi (modifiable par l\\'admin via la fiche chantier).</p>'}
+                ` : '<p class="muted" style="font-size:12px;margin:0 0 12px">Aucun budget saisi (modifiable par l\'admin via la fiche chantier).</p>'}
                 ${canEditHours ? `
                   <div class="form-row" style="gap:8px;align-items:flex-end">
                     <div class="form-group" style="flex:0 0 220px;margin-bottom:0">

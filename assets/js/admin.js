@@ -523,7 +523,7 @@ const AdminViews = {
         { label: 'Nom', render: c => escapeHtml(c.name) },
         { label: 'Contact', render: c => escapeHtml(c.contact) },
         { label: 'Email', render: c => escapeHtml(c.email) },
-        { label: 'Téléphone', render: c => escapeHtml(c.phone) },
+        { label: 'Identifiant', render: c => c.login ? `<code>${escapeHtml(c.login)}</code>` : '<span class="muted">—</span>' },
         { label: 'Portail', render: c => c.portalEnabled === false
             ? '<span class="badge status-cloture">Désactivé</span>'
             : '<span class="badge status-resolu">Actif</span>' },
@@ -546,13 +546,24 @@ const AdminViews = {
           </div>
           <div class="form-group"><label>Email</label><input class="input" type="email" name="email" value="${c?escapeHtml(c.email):''}"></div>
           <div class="form-group"><label>Adresse</label><input class="input" name="address" value="${c?escapeHtml(c.address):''}"></div>
-          <h3 style="margin-top:8px">Portail client</h3>
+          <h3 style="margin-top:8px">Accès portail client</h3>
+          <div class="form-row">
+            <div class="form-group"><label>Identifiant</label>
+              <input class="input" name="login" value="${c?escapeHtml(c.login||''):''}" placeholder="ex: recif">
+            </div>
+            <div class="form-group"><label>Mot de passe</label>
+              <input class="input" name="password" placeholder="${c?'(laisser vide pour ne pas changer)':'requis pour créer le compte'}">
+            </div>
+          </div>
           <div class="form-group">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
               <input type="checkbox" name="portalEnabled" ${c && c.portalEnabled === false ? '' : 'checked'}>
               Activer le portail client (connexion autorisée)
             </label>
-            <p class="muted" style="font-size:12px;margin:4px 0 0">Si décoché, l'utilisateur client ne pourra plus se connecter.</p>
+            <p class="muted" style="font-size:12px;margin:4px 0 0">
+              Si décoché, le client ne pourra plus se connecter même si le mot de passe est correct.
+              ${!c ? 'Pour créer le compte d\'accès, renseignez identifiant ET mot de passe ci-dessus.' : 'Laissez le mot de passe vide pour ne pas le changer.'}
+            </p>
           </div>
         </form>
       `,
@@ -562,6 +573,9 @@ const AdminViews = {
           const form = modal.querySelector('#cli-form');
           const data = Object.fromEntries(new FormData(form));
           data.portalEnabled = form.querySelector('[name="portalEnabled"]').checked;
+          // login/password sont optionnels — vide = pas de changement
+          if (!data.login)    delete data.login;
+          if (!data.password) delete data.password;
           if (!data.name || !data.code) { toast('Champs requis manquants', 'error'); return; }
           if (c) DB.update('clients', c.id, data); else DB.insert('clients', data);
           closeModal(); toast('Client enregistré'); Router.render();
@@ -699,15 +713,30 @@ const AdminViews = {
   },
 
   /* =========================== NOTIFICATIONS MAIL =========================== */
-  async notifications() {
-    // Cache la liste des events pour ne pas refaire la requête à chaque modal
-    if (!this._notifEvents) {
-      try { this._notifEvents = await api.notifications.events(); }
-      catch { this._notifEvents = []; }
+  notifications() {
+    // Caches locaux pour éviter de rerendrer Promise<string>
+    if (!this._notifState) this._notifState = { events: null, rules: null, loading: false };
+    const st = this._notifState;
+
+    // Chargement initial : déclenche les requêtes et re-render quand prêt
+    if (st.events === null || st.rules === null) {
+      if (!st.loading) {
+        st.loading = true;
+        Promise.all([
+          api.notifications.events().catch(() => []),
+          api.notifications.list().catch(() => []),
+        ]).then(([events, rules]) => {
+          st.events = events || [];
+          st.rules  = rules  || [];
+          st.loading = false;
+          if (location.hash.startsWith('#/admin/notifications')) Router.render();
+        });
+      }
+      return `<div class="card"><div class="card-body"><p class="muted">Chargement des règles…</p></div></div>`;
     }
-    const events = this._notifEvents || [];
-    let rules = [];
-    try { rules = await api.notifications.list(); } catch { rules = []; }
+
+    const events = st.events;
+    const rules  = st.rules;
 
     setTimeout(() => {
       $('#notif-add')?.addEventListener('click', () => AdminViews.openNotificationModal(null, events));
@@ -717,14 +746,19 @@ const AdminViews = {
       });
       document.querySelectorAll('[data-notif-del]').forEach(b => b.onclick = () => {
         confirmDialog('Supprimer cette règle ?', async () => {
-          await api.notifications.delete(b.dataset.notifDel);
+          try { await api.notifications.delete(b.dataset.notifDel); } catch (_) {}
           toast('Règle supprimée');
+          // Invalide le cache pour recharger
+          AdminViews._notifState = null;
           Router.render();
         });
       });
       document.querySelectorAll('[data-notif-toggle]').forEach(cb => cb.onclick = async () => {
         try {
           await api.notifications.update(cb.dataset.notifToggle, { active: cb.checked });
+          // Met à jour le cache local
+          const r = rules.find(x => x.id === cb.dataset.notifToggle);
+          if (r) r.active = cb.checked;
           toast(cb.checked ? 'Règle activée' : 'Règle désactivée');
         } catch (e) { cb.checked = !cb.checked; toast('Échec : ' + (e?.message||''), 'error'); }
       });

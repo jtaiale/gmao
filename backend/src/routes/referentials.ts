@@ -18,32 +18,86 @@ const clientSchema = z.object({
   phone: z.string().optional(),
   address: z.string().optional(),
   portalEnabled: z.boolean().optional(),
+  // Identifiants du compte portail (optionnels — l'admin peut ne pas les renseigner)
+  login:    z.string().optional(),
+  password: z.string().optional(),
 });
 
 export async function clientsRoutes(app: FastifyInstance) {
   app.addHook('preHandler', app.requireAuth);
 
-  app.get('/', { preHandler: app.requireAdminCan('clients', 'read') }, async () =>
-    app.prisma.client.findMany({ orderBy: { name: 'asc' } })
-  );
+  // Sérialise un client en y ajoutant le login du compte portail associé (s'il existe)
+  const serializeClient = (c: any) => {
+    const user = (c.users || []).find((u: any) => u.kind === 'client');
+    const { users, ...rest } = c;
+    return { ...rest, login: user?.login || null };
+  };
+
+  app.get('/', { preHandler: app.requireAdminCan('clients', 'read') }, async () => {
+    const list = await app.prisma.client.findMany({
+      orderBy: { name: 'asc' },
+      include: { users: { where: { kind: 'client' }, select: { login: true, kind: true } } },
+    });
+    return list.map(serializeClient);
+  });
 
   app.get('/:id', { preHandler: app.requireAdminCan('clients', 'read') }, async (req, reply) => {
-    const c = await app.prisma.client.findUnique({ where: { id: (req.params as any).id } });
+    const c = await app.prisma.client.findUnique({
+      where: { id: (req.params as any).id },
+      include: { users: { where: { kind: 'client' }, select: { login: true, kind: true } } },
+    });
     if (!c) return reply.code(404).send({ error: 'not_found' });
-    return c;
+    return serializeClient(c);
   });
 
   app.post('/', { preHandler: app.requireAdminCan('clients', 'write') }, async (req, reply) => {
     const parsed = clientSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', issues: parsed.error.issues });
-    const c = await app.prisma.client.create({ data: parsed.data });
+    const { login, password, ...clientData } = parsed.data;
+    const c = await app.prisma.client.create({ data: clientData });
+    // Créer aussi un compte portail si login + mot de passe fournis
+    if (login && password) {
+      try {
+        await app.prisma.user.create({
+          data: {
+            kind: 'client', login, password: await hashPassword(password),
+            name: c.name, email: c.email || null, clientId: c.id,
+          },
+        });
+      } catch (e: any) {
+        // login déjà pris : on renvoie quand même le client créé mais avec un avertissement
+        return reply.code(201).send({ ...c, _userError: e?.message || 'Login utilisateur déjà utilisé' });
+      }
+    }
     return reply.code(201).send(c);
   });
 
   app.patch('/:id', { preHandler: app.requireAdminCan('clients', 'write') }, async (req, reply) => {
     const parsed = clientSchema.partial().safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request' });
-    const c = await app.prisma.client.update({ where: { id: (req.params as any).id }, data: parsed.data });
+    const { login, password, ...clientData } = parsed.data;
+    const id = (req.params as any).id;
+    const c = await app.prisma.client.update({ where: { id }, data: clientData });
+    // Synchronise le compte portail (login + password optionnels)
+    if (login || password) {
+      const existing = await app.prisma.user.findFirst({ where: { clientId: id, kind: 'client' } });
+      if (existing) {
+        const patch: any = {};
+        if (login)    patch.login = login;
+        if (password) patch.password = await hashPassword(password);
+        try { await app.prisma.user.update({ where: { id: existing.id }, data: patch }); }
+        catch (e: any) { return { ...c, _userError: e?.message || 'Login déjà utilisé' }; }
+      } else if (login && password) {
+        try {
+          await app.prisma.user.create({
+            data: {
+              kind: 'client', login, password: await hashPassword(password),
+              name: c.name, email: c.email || null, clientId: c.id,
+            },
+          });
+        } catch (e: any) { return { ...c, _userError: e?.message || 'Login déjà utilisé' }; }
+      }
+    }
     return c;
   });
 
