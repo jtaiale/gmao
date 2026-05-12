@@ -121,8 +121,8 @@ const Chantier = {
                 ${(c.comments && c.comments.length) ? c.comments.map(cm => `
                   <div class="comment ${cm.role === 'tech' ? '' : 'client'}">
                     <div class="comment-head">
-                      <span class="comment-author">${escapeHtml(cm.author)} <span class="muted">(${cm.role === 'tech' ? 'technicien' : 'admin'})</span></span>
-                      <span class="comment-date">${fmtDateTime(cm.date)}</span>
+                      <span class="comment-author">${escapeHtml(cm.authorName || cm.author)} <span class="muted">(${cm.role === 'tech' ? 'technicien' : 'admin'})</span></span>
+                      <span class="comment-date">${fmtDateTime(cm.createdAt || cm.date)}</span>
                     </div>
                     <div>${escapeHtml(cm.text)}</div>
                   </div>`).join('') : '<p class="muted">Aucun commentaire pour le moment.</p>'}
@@ -265,7 +265,7 @@ const Chantier = {
           if (s && !modal.querySelector('[name="contactEmail"]').value) modal.querySelector('[name="contactEmail"]').value = s.contactEmail || '';
         });
 
-        modal.parentElement.querySelector('#cha-save').onclick = () => {
+        modal.parentElement.querySelector('#cha-save').onclick = async () => {
           const form = modal.querySelector('#cha-form');
           const data = Object.fromEntries(new FormData(form));
           if (!data.name || !data.clientId || !data.siteId) { toast('Champs requis manquants', 'error'); return; }
@@ -276,14 +276,16 @@ const Chantier = {
           // Collect checked technician IDs (FormData only keeps last value for repeated names)
           data.technicianIds = [...form.querySelectorAll('input[name="techId"]:checked')].map(cb => cb.value);
           delete data.techId;
-          if (c) {
-            DB.update('chantiers', c.id, data);
-          } else {
-            DB.createChantier({ ...data, createdBy: Auth.current.id });
-          }
-          closeModal();
-          toast('Chantier enregistré');
-          Router.render();
+          try {
+            if (c) {
+              DB.update('chantiers', c.id, data);
+            } else {
+              await DB.createChantier({ ...data, createdBy: Auth.current.id });
+            }
+            closeModal();
+            toast('Chantier enregistré');
+            Router.render();
+          } catch (_) { /* erreur déjà toastée */ }
         };
       }
     });

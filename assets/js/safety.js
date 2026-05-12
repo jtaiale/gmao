@@ -110,24 +110,33 @@ const Safety = {
       // Photos
       setupPhotoUpload($('#acc-photos'), photos);
 
-      $('#acc-submit').addEventListener('click', () => {
+      $('#acc-submit').addEventListener('click', async () => {
         const data = Object.fromEntries(new FormData($('#acc-form')));
         if (!data.clientId || !data.siteId || !data.title || !data.description || !data.riskNature) {
           toast('Champs obligatoires manquants', 'error'); return;
         }
-        const a = DB.createAccident({
-          clientId: data.clientId,
-          siteId: data.siteId,
-          title: data.title,
-          description: data.description,
-          riskNature: data.riskNature,
-          recommendations: data.recommendations || '',
-          photos: [...photos],
-          createdBy: Auth.current.id,
-          createdByName: Auth.current.name,
-        });
-        toast(`Déclaration ${a.number} enregistrée`);
-        location.hash = `#/tech/accident/${a.id}`;
+        const btn = $('#acc-submit'); if (btn) btn.disabled = true;
+        try {
+          // Upload des photos (data URLs) → S3/disk via /api/uploads
+          const uploaded = [];
+          for (const dataUrl of photos) {
+            try { uploaded.push({ url: (await api.uploads.dataUrl(dataUrl, 'accident')).url }); }
+            catch (e) { console.warn('upload photo accident KO', e?.message); }
+          }
+          const a = await DB.createAccident({
+            clientId: data.clientId,
+            siteId: data.siteId,
+            title: data.title,
+            description: data.description,
+            riskNature: data.riskNature,
+            recommendations: data.recommendations || '',
+            photos: uploaded,
+            createdBy: Auth.current.id,
+            createdByName: Auth.current.name,
+          });
+          toast(`Déclaration ${a.number} enregistrée`);
+          location.hash = `#/tech/accident/${a.id}`;
+        } catch (_) { if (btn) btn.disabled = false; }
       });
     }, 0);
 
@@ -334,26 +343,34 @@ const Safety = {
 
       setupPhotoUpload($('#der-photos'), photos);
 
-      $('#der-submit').addEventListener('click', () => {
+      $('#der-submit').addEventListener('click', async () => {
         const data = Object.fromEntries(new FormData($('#der-form')));
         if (!data.clientId || !data.siteId || !data.title || !data.description || !data.dateStart || !data.dateEnd || !data.riskAnalysis) {
           toast('Champs obligatoires manquants', 'error'); return;
         }
-        const d = DB.createDerogation({
-          clientId: data.clientId,
-          siteId: data.siteId,
-          title: data.title,
-          description: data.description,
-          dateStart: new Date(data.dateStart).toISOString(),
-          dateEnd: new Date(data.dateEnd).toISOString(),
-          riskAnalysis: data.riskAnalysis,
-          techRecommendations: data.techRecommendations || '',
-          photos: [...photos],
-          createdBy: Auth.current.id,
-          createdByName: Auth.current.name,
-        });
-        toast(`Demande ${d.number} créée`);
-        location.hash = `#/tech/derogation/${d.id}`;
+        const btn = $('#der-submit'); if (btn) btn.disabled = true;
+        try {
+          const uploaded = [];
+          for (const dataUrl of photos) {
+            try { uploaded.push({ url: (await api.uploads.dataUrl(dataUrl, 'derogation')).url }); }
+            catch (e) { console.warn('upload photo derogation KO', e?.message); }
+          }
+          const d = await DB.createDerogation({
+            clientId: data.clientId,
+            siteId: data.siteId,
+            title: data.title,
+            description: data.description,
+            dateStart: new Date(data.dateStart).toISOString(),
+            dateEnd: new Date(data.dateEnd).toISOString(),
+            riskAnalysis: data.riskAnalysis,
+            techRecommendations: data.techRecommendations || '',
+            photos: uploaded,
+            createdBy: Auth.current.id,
+            createdByName: Auth.current.name,
+          });
+          toast(`Demande ${d.number} créée`);
+          location.hash = `#/tech/derogation/${d.id}`;
+        } catch (_) { if (btn) btn.disabled = false; }
       });
     }, 0);
 

@@ -1,63 +1,82 @@
 /* ============================================================
-   Authentification — session localStorage
+   Authentification — désormais branchée sur le backend (api.js)
+   Garde l'interface synchrone (Auth.isAdmin etc.) que le reste
+   de l'application utilise déjà, mais les méthodes login* / init
+   sont asynchrones et passent par /api/auth.
    ============================================================ */
-const SESSION_KEY = 'gmao_argos_session_v1';
-
 const Auth = {
   current: null,
 
-  init() {
+  /**
+   * Restaure la session depuis un token déjà stocké côté navigateur.
+   * Renvoie l'utilisateur courant ou null si pas de session valide.
+   */
+  async init() {
+    if (typeof api === 'undefined') {
+      console.warn('api.js non chargé — Auth en mode dégradé');
+      this.current = null;
+      return null;
+    }
+    if (!api.auth.isLogged()) {
+      this.current = null;
+      return null;
+    }
     try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (raw) this.current = JSON.parse(raw);
-    } catch (e) { /* ignore */ }
+      const u = await api.auth.me();
+      this._setCurrent(u);
+      return this.current;
+    } catch (e) {
+      console.warn('Auth.init: session invalide, on déconnecte', e?.message);
+      api.Token.clear();
+      this.current = null;
+      return null;
+    }
+  },
+
+  _setCurrent(u) {
+    if (!u) { this.current = null; return; }
+    this.current = {
+      kind: u.kind,
+      id: u.id,
+      name: u.name,
+      login: u.login,
+      superAdmin: !!u.superAdmin,
+      permissions: u.permissions || {},
+      clientId: u.clientId || null,
+    };
+  },
+
+  async _login(kind, login, password) {
+    if (typeof api === 'undefined') throw new Error('Client API non chargé');
+    const u = await api.auth.login(login, password, kind);
+    this._setCurrent(u);
     return this.current;
   },
 
-  loginAdmin(login, password) {
-    const admin = DB.list('admins').find(a => a.login === login && a.password === password);
-    if (!admin) return null;
-    this.current = { kind: 'admin', id: admin.id, name: admin.name, login: admin.login };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(this.current));
-    return this.current;
-  },
+  loginAdmin (login, password) { return this._login('admin',  login, password); },
+  loginClient(login, password) { return this._login('client', login, password); },
+  loginTech  (login, password) { return this._login('tech',   login, password); },
 
-  loginClient(login, password) {
-    const client = DB.list('clients').find(c => c.login === login && c.password === password);
-    if (!client) return null;
-    this.current = { kind: 'client', id: client.id, name: client.name, login: client.login };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(this.current));
-    return this.current;
-  },
-
-  loginTech(login, password) {
-    const tech = DB.list('technicians').find(t => t.login === login && t.password === password);
-    if (!tech) return null;
-    this.current = { kind: 'tech', id: tech.id, name: tech.name, login: tech.login };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(this.current));
-    return this.current;
-  },
-
-  logout() {
+  async logout() {
+    try { if (typeof api !== 'undefined') await api.auth.logout(); } catch (_) {}
     this.current = null;
-    localStorage.removeItem(SESSION_KEY);
   },
 
-  isAdmin() { return this.current && this.current.kind === 'admin'; },
+  isAdmin () { return this.current && this.current.kind === 'admin';  },
   isClient() { return this.current && this.current.kind === 'client'; },
-  isTech() { return this.current && this.current.kind === 'tech'; },
+  isTech  () { return this.current && this.current.kind === 'tech';   },
 
-  // Permissions for admin role only.
-  // For tech/client, returns true (their own scoped routes are not gated by this system).
+  /**
+   * Vérification de permission admin (lecture/écriture par menu).
+   * Pour tech / client, retourne true (leurs accès sont scopés ailleurs).
+   */
   can(menu, level) {
     level = level || 'read';
     if (!this.isAdmin()) return true;
-    const me = DB.get('admins', this.current.id);
-    if (!me) return false;
-    if (me.superAdmin) return true;
-    const p = (me.permissions || {})[menu] || 'none';
-    if (level === 'read')  return p === 'read' || p === 'write';
-    if (level === 'write') return p === 'write';
+    if (this.current.superAdmin) return true;
+    const lvl = (this.current.permissions || {})[menu] || 'none';
+    if (level === 'read')  return lvl === 'read' || lvl === 'write';
+    if (level === 'write') return lvl === 'write';
     return false;
   },
 };

@@ -286,8 +286,8 @@ const TechViews = {
                   t.comments.map(c => `
                   <div class="comment ${c.role === 'client' ? 'client' : ''}">
                     <div class="comment-head">
-                      <span class="comment-author">${escapeHtml(c.author)} <span class="muted">(${c.role === 'client' ? 'client' : c.role === 'tech' ? 'technicien' : 'admin'})</span></span>
-                      <span class="comment-date">${fmtDateTime(c.date)}</span>
+                      <span class="comment-author">${escapeHtml(c.authorName || c.author)} <span class="muted">(${c.role === 'client' ? 'client' : c.role === 'tech' ? 'technicien' : 'admin'})</span></span>
+                      <span class="comment-date">${fmtDateTime(c.createdAt || c.date)}</span>
                     </div>
                     <div>${escapeHtml(c.text)}</div>
                   </div>`).join('')}
@@ -415,18 +415,20 @@ const TechViews = {
         siteSel.addEventListener('change', refreshProducts);
         refreshSites();
 
-        modal.parentElement.querySelector('#tt-save').onclick = () => {
+        modal.parentElement.querySelector('#tt-save').onclick = async () => {
           const data = Object.fromEntries(new FormData(modal.querySelector('#tech-ticket-form')));
           if (!data.clientId || !data.siteId || !data.title) { toast('Champs obligatoires manquants', 'error'); return; }
-          const t = DB.createTicket({
-            ...data,
-            createdBy: Auth.current.id,
-            technicianIds: [Auth.current.id],
-            status: 'en_cours',
-          });
-          toast(`Ticket ${t.number} créé`);
-          closeModal();
-          location.hash = `#/tech/ticket/${t.id}`;
+          try {
+            const t = await DB.createTicket({
+              ...data,
+              createdBy: Auth.current.id,
+              technicianIds: [Auth.current.id],
+              status: 'en_cours',
+            });
+            toast(`Ticket ${t.number} créé`);
+            closeModal();
+            location.hash = `#/tech/ticket/${t.id}`;
+          } catch (_) { /* erreur déjà toastée */ }
         };
       }
     });

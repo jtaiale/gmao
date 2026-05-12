@@ -11,9 +11,7 @@ const Bulletins = {
   /* ---------- Helpers de comptage ---------- */
   unreadCountForTech() {
     if (!Auth.isTech()) return 0;
-    return (DB.list('bulletins') || [])
-      .filter(b => !(b.readBy || []).includes(Auth.current.id))
-      .length;
+    return (DB.list('bulletins') || []).filter(b => !b.readByMe).length;
   },
   totalCount() { return (DB.list('bulletins') || []).length; },
 
@@ -38,17 +36,16 @@ const Bulletins = {
   _counts(scope) {
     const items = DB.list('bulletins') || [];
     if (scope === 'tech') {
-      const me = Auth.current.id;
       return {
-        unread: items.filter(b => !(b.readBy || []).includes(me)).length,
-        read:   items.filter(b => (b.readBy || []).includes(me)).length,
+        unread: items.filter(b => !b.readByMe).length,
+        read:   items.filter(b =>  b.readByMe).length,
       };
     }
-    // admin: nombre total + bulletins non lus par au moins un tech
+    // admin : nombre total + bulletins non encore lus par tous les techs
     const techCount = DB.list('technicians').length;
     return {
       total: items.length,
-      pending: items.filter(b => (b.readBy || []).length < techCount).length,
+      pending: items.filter(b => (b.readCount ?? 0) < techCount).length,
     };
   },
   _statusPills(counts, scope) {
@@ -96,14 +93,14 @@ const Bulletins = {
         ${scope === 'tech' ? '<th>Statut</th>' : '<th>Lu par</th>'}
       </tr></thead>
       <tbody>${items.map(b => {
-        const readBy = b.readBy || [];
         const techCount = DB.list('technicians').length;
-        const isUnreadForMe = scope === 'tech' && !readBy.includes(me);
+        const readCount = b.readCount ?? 0;
+        const isUnreadForMe = scope === 'tech' && !b.readByMe;
         const statusCell = scope === 'tech'
           ? `<td data-label="Statut">${isUnreadForMe
               ? '<span class="badge status-en_cours">Non lu</span>'
               : '<span class="badge status-resolu">Lu</span>'}</td>`
-          : `<td data-label="Lu par"><span class="muted">${readBy.length} / ${techCount} technicien${techCount>1?'s':''}</span></td>`;
+          : `<td data-label="Lu par"><span class="muted">${readCount} / ${techCount} technicien${techCount>1?'s':''}</span></td>`;
         return `
           <tr onclick="location.hash='${base}${b.id}'" style="cursor:pointer; ${isUnreadForMe ? 'background:var(--brand-lighter)' : ''}">
             <td data-label="N°"><span class="ticket-link">${b.number}</span></td>
@@ -119,17 +116,21 @@ const Bulletins = {
   detail(id, scope) {
     const b = DB.get('bulletins', id);
     if (!b) return `<div class="card"><div class="card-body"><p>Bulletin introuvable.</p></div></div>`;
-    // Mark as read (tech only)
-    if (scope === 'tech' && Auth.isTech()) {
+    // Marquer comme lu (tech) — API + cache
+    if (scope === 'tech' && Auth.isTech() && !b.readByMe) {
       DB.markBulletinRead(id, Auth.current.id);
     }
+    // Au passage on rafraîchit le détail pour récupérer reads + comments complets
+    DB.refresh('bulletins', id);
     const back = scope === 'admin' ? '#/admin/bulletins' : '#/tech/bulletins';
     const canEdit = scope === 'admin' && Auth.can('bulletins', 'write');
     setTimeout(() => this._wireDetail(id, scope), 0);
 
     const techCount = DB.list('technicians').length;
-    const readCount = (b.readBy || []).length;
-    const readers = (b.readBy || []).map(tid => DB.techName(tid));
+    const reads     = Array.isArray(b.reads) ? b.reads : [];
+    const readCount = b.readCount ?? reads.length;
+    const readers   = reads.map(r => r.technician?.name || DB.techName(r.technicianId));
+    const dateIso   = b.bulletinDate || b.date;
 
     return `
       <div class="flex mb-2">
@@ -143,7 +144,7 @@ const Bulletins = {
         <div class="card-body">
           <div class="detail-meta">
             <div class="meta-item"><div class="meta-label">Numéro</div><div class="meta-value"><code>${escapeHtml(b.number)}</code></div></div>
-            <div class="meta-item"><div class="meta-label">Date du bulletin</div><div class="meta-value">${b.date ? fmtDate(b.date) : '—'}</div></div>
+            <div class="meta-item"><div class="meta-label">Date du bulletin</div><div class="meta-value">${dateIso ? fmtDate(dateIso) : '—'}</div></div>
             <div class="meta-item"><div class="meta-label">Publié le</div><div class="meta-value">${fmtDateTime(b.createdAt)}</div></div>
             ${scope === 'admin' ? `<div class="meta-item"><div class="meta-label">Lu par</div><div class="meta-value">${readCount} / ${techCount} technicien${techCount>1?'s':''}</div></div>` : ''}
           </div>
@@ -167,8 +168,8 @@ const Bulletins = {
             ${(b.comments && b.comments.length) ? b.comments.map(cm => `
               <div class="comment ${cm.role === 'tech' ? '' : 'client'}">
                 <div class="comment-head">
-                  <span class="comment-author">${escapeHtml(cm.author)} <span class="muted">(${cm.role === 'tech' ? 'technicien' : 'admin'})</span></span>
-                  <span class="comment-date">${fmtDateTime(cm.date)}</span>
+                  <span class="comment-author">${escapeHtml(cm.authorName || cm.author)} <span class="muted">(${cm.role === 'tech' ? 'technicien' : 'admin'})</span></span>
+                  <span class="comment-date">${fmtDateTime(cm.createdAt || cm.date)}</span>
                 </div>
                 <div>${escapeHtml(cm.text)}</div>
               </div>`).join('') : '<p class="muted">Aucun commentaire pour le moment.</p>'}
@@ -221,22 +222,24 @@ const Bulletins = {
       `,
       footer: `<button class="btn btn-secondary" onclick="closeModal()">Annuler</button><button class="btn" id="bul-save">${icon('check')} Enregistrer</button>`,
       onOpen(modal) {
-        modal.parentElement.querySelector('#bul-save').onclick = () => {
+        modal.parentElement.querySelector('#bul-save').onclick = async () => {
           const data = Object.fromEntries(new FormData(modal.querySelector('#bul-form')));
           if (!data.title || !data.info) { toast('Champs requis manquants', 'error'); return; }
-          data.date = data.date ? new Date(data.date).toISOString() : null;
-          if (b) {
-            // Garder le numéro existant si l'utilisateur n'a pas changé
-            if (!data.number) data.number = b.number;
-            DB.update('bulletins', b.id, data);
-          } else {
-            const payload = { ...data, createdBy: Auth.current.id };
-            if (!payload.number) delete payload.number; // laisse createBulletin générer
-            DB.createBulletin(payload);
-          }
-          closeModal();
-          toast('Bulletin enregistré');
-          Router.render();
+          // Le backend attend bulletinDate, pas date
+          if (data.date) data.bulletinDate = new Date(data.date).toISOString();
+          delete data.date;
+          try {
+            if (b) {
+              DB.update('bulletins', b.id, data);
+            } else {
+              const payload = { ...data, createdBy: Auth.current.id };
+              delete payload.number; // toujours côté serveur
+              await DB.createBulletin(payload);
+            }
+            closeModal();
+            toast('Bulletin enregistré');
+            Router.render();
+          } catch (_) { /* erreur déjà toastée */ }
         };
       }
     });

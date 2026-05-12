@@ -241,8 +241,8 @@ const AdminViews = {
                   t.comments.map(c => `
                   <div class="comment ${c.role === 'client' ? 'client' : ''}">
                     <div class="comment-head">
-                      <span class="comment-author">${escapeHtml(c.author)} <span class="muted">(${c.role === 'client' ? 'client' : c.role === 'tech' ? 'technicien' : 'admin'})</span></span>
-                      <span class="comment-date">${fmtDateTime(c.date)}</span>
+                      <span class="comment-author">${escapeHtml(c.authorName || c.author)} <span class="muted">(${c.role === 'client' ? 'client' : c.role === 'tech' ? 'technicien' : 'admin'})</span></span>
+                      <span class="comment-date">${fmtDateTime(c.createdAt || c.date)}</span>
                     </div>
                     <div>${escapeHtml(c.text)}</div>
                   </div>`).join('')}
@@ -414,19 +414,21 @@ const AdminViews = {
         siteSel.addEventListener('change', refreshProducts);
         refreshSites();
 
-        modal.parentElement.querySelector('#ticket-save').onclick = () => {
+        modal.parentElement.querySelector('#ticket-save').onclick = async () => {
           const fd = new FormData(modal.querySelector('#ticket-form'));
           const data = Object.fromEntries(fd);
           if (!data.clientId || !data.siteId || !data.title) { toast('Champs obligatoires manquants', 'error'); return; }
-          if (t) {
-            DB.update('tickets', t.id, data);
-            toast('Ticket modifié');
-          } else {
-            DB.createTicket({ ...data, createdBy: Auth.current.id });
-            toast('Ticket créé');
-          }
-          closeModal();
-          Router.render();
+          try {
+            if (t) {
+              DB.update('tickets', t.id, data);
+              toast('Ticket modifié');
+            } else {
+              await DB.createTicket({ ...data, createdBy: Auth.current.id });
+              toast('Ticket créé');
+            }
+            closeModal();
+            Router.render();
+          } catch (_) { /* erreur déjà toastée par DB */ }
         };
       }
     });

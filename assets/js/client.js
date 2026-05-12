@@ -4,7 +4,8 @@
 const ClientViews = {
 
   _myTickets() {
-    return DB.list('tickets').filter(t => t.clientId === Auth.current.id);
+    const cid = Auth.current.clientId;
+    return DB.list('tickets').filter(t => t.clientId === cid);
   },
 
   /* =========================== DASHBOARD =========================== */
@@ -47,14 +48,15 @@ const ClientViews = {
 
   /* =========================== NEW TICKET =========================== */
   newTicket() {
-    const sites = DB.list('sites').filter(s => s.clientId === Auth.current.id);
+    const cid = Auth.current.clientId;
+    const sites = DB.list('sites').filter(s => s.clientId === cid);
 
     setTimeout(() => {
       const siteSel = $('#new-ticket-form [name="siteId"]');
       const prodSel = $('#new-ticket-form [name="productId"]');
       const refreshProducts = () => {
         const sid = siteSel?.value;
-        const prods = DB.list('products').filter(p => p.clientId === Auth.current.id && (!sid || p.siteId === sid));
+        const prods = DB.list('products').filter(p => p.clientId === cid && (!sid || p.siteId === sid));
         if (prodSel) {
           prodSel.innerHTML = ['<option value="">— Aucun —</option>',
             ...prods.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
@@ -64,23 +66,29 @@ const ClientViews = {
       siteSel?.addEventListener('change', refreshProducts);
       refreshProducts();
 
-      $('#new-ticket-form')?.addEventListener('submit', e => {
+      $('#new-ticket-form')?.addEventListener('submit', async e => {
         e.preventDefault();
         const data = Object.fromEntries(new FormData(e.target));
         if (!data.siteId || !data.title || !data.description) {
           toast('Veuillez remplir tous les champs obligatoires', 'error'); return;
         }
-        const t = DB.createTicket({
-          clientId: Auth.current.id,
-          siteId: data.siteId,
-          productId: data.productId || null,
-          priority: data.priority,
-          title: data.title,
-          description: data.description,
-          createdBy: Auth.current.id,
-        });
-        toast(`Demande ${t.number} créée`);
-        location.hash = `#/client/ticket/${t.id}`;
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        if (submitBtn) submitBtn.disabled = true;
+        try {
+          const t = await DB.createTicket({
+            clientId: Auth.current.clientId || Auth.current.id,
+            siteId: data.siteId,
+            productId: data.productId || null,
+            priority: data.priority,
+            title: data.title,
+            description: data.description,
+            createdBy: Auth.current.id,
+          });
+          toast(`Demande ${t.number} créée`);
+          location.hash = `#/client/ticket/${t.id}`;
+        } catch (_) {
+          if (submitBtn) submitBtn.disabled = false;
+        }
       });
     }, 0);
 
@@ -190,7 +198,7 @@ const ClientViews = {
   /* =========================== TICKET DETAIL =========================== */
   ticketDetail(id) {
     const t = DB.get('tickets', id);
-    if (!t || t.clientId !== Auth.current.id) {
+    if (!t || t.clientId !== Auth.current.clientId) {
       return `<div class="card"><div class="card-body"><p>Demande introuvable.</p><a class="btn" href="#/client/tickets">Retour</a></div></div>`;
     }
     setTimeout(() => {
@@ -265,8 +273,8 @@ const ClientViews = {
               t.comments.map(c => `
                 <div class="comment ${c.role === 'client' ? 'client' : ''}">
                   <div class="comment-head">
-                    <span class="comment-author">${escapeHtml(c.author)} <span class="muted">(${c.role === 'client' ? 'vous' : c.role === 'tech' ? 'technicien' : 'ARGOS'})</span></span>
-                    <span class="comment-date">${fmtDateTime(c.date)}</span>
+                    <span class="comment-author">${escapeHtml(c.authorName || c.author)} <span class="muted">(${c.role === 'client' ? 'vous' : c.role === 'tech' ? 'technicien' : 'ARGOS'})</span></span>
+                    <span class="comment-date">${fmtDateTime(c.createdAt || c.date)}</span>
                   </div>
                   <div>${escapeHtml(c.text)}</div>
                 </div>`).join('')}
@@ -317,7 +325,7 @@ const ClientViews = {
       options: opts
     });
 
-    const sites = DB.list('sites').filter(s => s.clientId === Auth.current.id);
+    const sites = DB.list('sites').filter(s => s.clientId === Auth.current.clientId);
     const siteCounts = sites.map(s => tickets.filter(t => t.siteId === s.id).length);
     new Chart($('#cl-chart-site'), {
       type: 'bar',

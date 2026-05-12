@@ -263,16 +263,6 @@ const LoginView = {
             </div>
             <button type="submit" class="btn btn-block btn-lg">Se connecter</button>
           </form>
-          <div class="login-hint">
-            <strong>Comptes de démo :</strong><br>
-            ${this.state.tab === 'admin' ? '<code>admin</code> / <code>admin</code> (super)<br><code>consult</code> / <code>consult</code> (lecture seule)'
-              : this.state.tab === 'tech' ?
-                'Pierre Hoarau (clim) : <code>phoarau</code> / <code>pierre</code><br>'+
-                'Yann Grondin (plomb.) : <code>ygrondin</code> / <code>yann</code><br>'+
-                'Laurent Payet (élec.) : <code>lpayet</code> / <code>laurent</code><br>'+
-                'Sébastien Robert : <code>srobert</code> / <code>seb</code>'
-              : 'Hôtel Le Récif : <code>recif</code> / <code>recif</code><br>Société Beaumont : <code>beaumont</code> / <code>beaumont</code><br>Mairie St-Pierre : <code>stpierre</code> / <code>stpierre</code><br>Résidence Corail : <code>corail</code> / <code>corail</code>'}
-          </div>
         </div>
       </div>
     `;
@@ -283,34 +273,45 @@ const LoginView = {
       this.render();
     }));
 
-    $('#login-form').addEventListener('submit', e => {
+    $('#login-form').addEventListener('submit', async e => {
       e.preventDefault();
       const fd = new FormData(e.target);
       const login = fd.get('login').trim();
       const password = fd.get('password');
-      const session = this.state.tab === 'admin'
-        ? Auth.loginAdmin(login, password)
-        : this.state.tab === 'tech'
-          ? Auth.loginTech(login, password)
-          : Auth.loginClient(login, password);
-      if (!session) {
-        this.state.error = 'Identifiant ou mot de passe incorrect';
-        this.render();
-        return;
-      }
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Connexion…'; }
       this.state.error = null;
-      location.hash = session.kind === 'admin' ? '#/admin' : session.kind === 'tech' ? '#/tech' : '#/client';
-      Router.render();
+      try {
+        const session = this.state.tab === 'admin'
+          ? await Auth.loginAdmin(login, password)
+          : this.state.tab === 'tech'
+            ? await Auth.loginTech(login, password)
+            : await Auth.loginClient(login, password);
+        if (!session) throw new Error('Identifiant ou mot de passe incorrect');
+        // Charge les données depuis l'API maintenant que la session est ouverte
+        await DB.init();
+        location.hash = session.kind === 'admin' ? '#/admin' : session.kind === 'tech' ? '#/tech' : '#/client';
+        Router.render();
+      } catch (err) {
+        this.state.error = (err && err.status === 401)
+          ? 'Identifiant ou mot de passe incorrect'
+          : (err?.message || 'Erreur de connexion au serveur');
+        this.render();
+      }
     });
   }
 };
 
 /* ============================================================
-   Bootstrap
+   Bootstrap — asynchrone : auth (restoration token) puis hydratation API
    ============================================================ */
-window.addEventListener('DOMContentLoaded', () => {
-  DB.init();
-  Auth.init();
+window.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await Auth.init();
+    if (Auth.current) await DB.init();
+  } catch (e) {
+    console.warn('Bootstrap auth/db error', e);
+  }
   Router.render();
   window.addEventListener('hashchange', () => Router.render());
 });
